@@ -92,9 +92,13 @@ sequenceDiagram
 
 UI 稿是纯前端静态稿（无后端、无真实生成），用于确认布局、信息层级和交互。图片是示意构图，不是实际家庭照。
 
-| 默认编辑状态 | 分割对比 | 保护区域 |
-|---|---|---|
-| ![默认编辑状态](design/ui-mockup.png) | ![分割对比](design/ui-mockup-compare.png) | ![保护区域](design/ui-mockup-protect.png) |
+**原图 / 结果分割对比** —— 中央竖直手柄拖动改变分割位置，对比时蒙版自动隐藏：
+
+![分割对比](design/ui-mockup-compare.png)
+
+**保护区域** —— 珊瑚红 K1/K2/K3（宝宝脸部、男士手臂、背景气泡），生成时从编辑蒙版中扣除：
+
+![保护区域](design/ui-mockup-protect.png)
 
 - 布局：`Top bar 56px` + `Tool rail 64px` + `Canvas stage` + `Inspector 380px` + `Status bar 28px`，设计基准 1440×900，桌面优先。
 - 颜色即语义：青色 = 要编辑，珊瑚红 = 保护，琥珀 = 队列/警告，绿色 = 成功。
