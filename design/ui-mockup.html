@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MaskCanvas — UI Mockup</title>
+<style>
+  :root{
+    --bg-app:#0E1116; --bg-panel:#151A21; --bg-card:#1B222C; --bg-card2:#202935;
+    --bg-canvas:#0A0D12; --border:#2A323D; --border-soft:#222B36;
+    --text:#E8EDF4; --text-2:#9AA6B6; --muted:#66707F;
+    --accent:#3DD6C4; --accent-2:#5BE3D3; --protect:#FF6B6B; --warn:#F5B84B;
+    --success:#55D187; --danger:#FF5D5D;
+    --radius:14px; --radius-sm:10px;
+    --shadow:0 18px 60px rgba(0,0,0,.42);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:#05070A;color:var(--text);
+    font-family:Inter,"PingFang SC","Noto Sans SC",system-ui,-apple-system,sans-serif;
+    -webkit-font-smoothing:antialiased;font-size:12px}
+  button,input,textarea,select{font:inherit;color:inherit}
+  button{cursor:pointer}
+  .viewport{width:100%;overflow:hidden;display:flex;justify-content:center;padding:14px 0 18px}
+  .app{width:1360px;height:860px;flex:0 0 1360px;background:var(--bg-app);
+    border:1px solid #232C37;border-radius:18px;overflow:hidden;display:grid;
+    grid-template-rows:52px 1fr 26px;transform-origin:top center;box-shadow:var(--shadow)}
+  .topbar{display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid var(--border-soft);background:#10151B}
+  .brand{display:flex;align-items:center;gap:9px;min-width:196px}
+  .logo{width:28px;height:28px;border-radius:9px;background:linear-gradient(145deg,#3DD6C4,#1F8F87);
+    display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 1px #4FE4D3 inset}
+  .logo svg{width:17px;height:17px;color:#062421}
+  .brand-name{font-weight:650;font-size:14px;letter-spacing:.2px}
+  .beta{font-size:9px;color:var(--accent);border:1px solid #2D6E68;background:#122C2A;border-radius:6px;padding:1px 5px}
+  .project-chip{display:flex;align-items:center;gap:8px;padding:5px 9px;border:1px solid var(--border);
+    border-radius:9px;background:#141B23;color:var(--text-2);font-size:11px;white-space:nowrap}
+  .project-chip b{color:var(--text);font-weight:550}
+  .project-chip .local{font-size:9px;color:#8FE7D9;background:#122C2A;border-radius:5px;padding:1px 5px}
+  .top-center{display:flex;align-items:center;gap:6px;margin-left:auto;margin-right:auto}
+  .icon-btn{width:28px;height:28px;border:1px solid transparent;background:transparent;border-radius:8px;
+    display:inline-flex;align-items:center;justify-content:center;color:var(--text-2)}
+  .icon-btn:hover{background:#1C2530;color:var(--text);border-color:#2A3642}
+  .icon-btn:disabled{opacity:.32;cursor:default}
+  .icon-btn svg{width:15px;height:15px}
+  .zoom-read{font-size:11px;color:var(--text-2);min-width:38px;text-align:center;font-variant-numeric:tabular-nums}
+  .divider-v{width:1px;height:18px;background:var(--border);margin:0 4px}
+  .top-right{display:flex;align-items:center;gap:8px;margin-left:auto}
+  .pill{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border-radius:999px;
+    border:1px solid var(--border);background:#141B23;font-size:10px;color:var(--text-2);white-space:nowrap}
+  .dot{width:6px;height:6px;border-radius:50%;background:var(--success);box-shadow:0 0 0 3px rgba(85,209,135,.12)}
+  .dot.amber{background:var(--warn);box-shadow:0 0 0 3px rgba(245,184,75,.12)}
+  .dot.red{background:var(--danger);box-shadow:0 0 0 3px rgba(255,93,93,.12)}
+  .pill.agent{cursor:pointer;color:#B8F5EC;border-color:#265B57;background:#102724}
+  .pill.queue{color:#D9C18A;border-color:#4A3C21;background:#211B10}
+  .btn{border:1px solid var(--border);background:#1A222C;color:var(--text);border-radius:9px;
+    padding:6px 11px;font-size:11px;font-weight:550;display:inline-flex;align-items:center;gap:6px}
+  .btn:hover{background:#222C38}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#062421}
+  .btn.primary:hover{background:var(--accent-2)}
+  .btn.ghost{background:transparent;color:var(--text-2)}
+  .btn.ghost:hover{background:#1A222C;color:var(--text)}
+  .btn.small{padding:5px 9px;font-size:10px}
+  .btn:disabled{opacity:.42;cursor:not-allowed}
+  .avatar{width:26px;height:26px;border-radius:50%;background:linear-gradient(145deg,#6A7A8F,#3B4655);
+    display:flex;align-items:center;justify-content:center;font-size:10px;color:#EAF0F7;border:1px solid #3A4756}
+
+  .main{display:grid;grid-template-columns:58px 1fr 330px;min-height:0}
+  .toolrail{border-right:1px solid var(--border-soft);background:#11161C;display:flex;flex-direction:column;
+    align-items:center;padding:10px 0;gap:4px}
+  .tool{width:38px;height:38px;border-radius:10px;border:1px solid transparent;background:transparent;
+    color:#93A0B1;display:flex;align-items:center;justify-content:center;position:relative}
+  .tool svg{width:19px;height:19px}
+  .tool:hover{background:#1B2430;color:var(--text)}
+  .tool.active{background:#12312E;color:var(--accent);border-color:#245D57;box-shadow:0 0 0 1px rgba(61,214,196,.12) inset}
+  .tool .key{position:absolute;right:3px;bottom:2px;font-size:8px;color:#6E7B8C}
+  .tool.active .key{color:#7DE7DA}
+  .tool-sep{width:24px;height:1px;background:var(--border);margin:6px 0}
+  .rail-bottom{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:10px;padding-bottom:8px}
+  .swatch{width:22px;height:22px;border-radius:7px;background:var(--accent);border:2px solid #0E1116;
+    box-shadow:0 0 0 1px #3D7F78}
+  .opacity-mini{width:30px;height:4px;border-radius:3px;background:#2A333E;position:relative}
+  .opacity-mini::after{content:"";position:absolute;left:0;top:0;bottom:0;width:38%;border-radius:3px;background:var(--accent)}
+
+  .stage{display:grid;grid-template-rows:40px 1fr 86px;min-width:0;background:var(--bg-canvas)}
+  .stage-head{display:flex;align-items:center;gap:10px;padding:0 14px;border-bottom:1px solid #1B232D;background:#0D1218}
+  .crumb{font-size:11px;color:var(--muted)}
+  .crumb b{color:var(--text-2);font-weight:500}
+  .seg{display:flex;background:#151C24;border:1px solid var(--border);border-radius:8px;padding:2px;gap:2px;margin-left:8px}
+  .seg button{border:0;background:transparent;color:var(--text-2);border-radius:6px;padding:4px 9px;font-size:10px}
+  .seg button.active{background:#24303C;color:var(--text)}
+  .stage-head .right{margin-left:auto;display:flex;align-items:center;gap:8px}
+  .tiny{font-size:10px;color:var(--muted)}
+  .canvas-wrap{position:relative;min-height:0;display:flex;align-items:center;justify-content:center;
+    background-color:#0A0D12;background-image:radial-gradient(circle,#18212B 1px,transparent 1px);
+    background-size:18px 18px;overflow:hidden}
+  .artboard{position:relative;width:420px;height:560px;border-radius:8px;overflow:hidden;
+    box-shadow:0 24px 70px rgba(0,0,0,.68),0 0 0 1px #2A3542;transform:scale(1);transition:transform .18s ease}
+  .photo{position:absolute;inset:0;--split:52%;overflow:hidden}
+  .p-layer{position:absolute;inset:0;width:100%;height:100%;display:block;object-fit:cover;object-position:center 42%}
+  .p-layer.before{opacity:0;filter:saturate(.42) brightness(.9) contrast(.97) sepia(.16)}
+  .photo.compare .p-layer.before{opacity:1}
+  .photo.compare .p-layer.after{clip-path:inset(0 0 0 var(--split))}
+  .compare-line{position:absolute;top:0;bottom:0;left:var(--split);width:1px;background:rgba(255,255,255,.65);
+    display:none;z-index:6;pointer-events:none}
+  .compare-line::after{content:"";position:absolute;top:50%;left:-11px;width:22px;height:22px;border-radius:50%;
+    background:#EDF3F7;border:2px solid #0E1116;box-shadow:0 2px 8px rgba(0,0,0,.5);transform:translateY(-50%)}
+  .photo.compare .compare-line{display:block}
+  .photo.compare .chip{display:none}
+  .photo.compare .mask-layer{opacity:0;transition:opacity .15s ease}
+  .mask-layer{position:absolute;inset:0;width:100%;height:100%;z-index:5;pointer-events:none}
+  .mask-layer .edit{fill:rgba(61,214,196,.25);stroke:#42E0CE;stroke-width:1.6;stroke-dasharray:7 5}
+  .mask-layer .keep{fill:rgba(255,107,107,.18);stroke:#FF7B7B;stroke-width:1.6;stroke-dasharray:6 5}
+  .mask-layer .focus{stroke-width:2.6;filter:drop-shadow(0 0 4px rgba(66,224,206,.55))}
+  .chip{position:absolute;z-index:7;display:inline-flex;align-items:center;gap:5px;padding:3px 6px;border-radius:6px;
+    font-size:9px;letter-spacing:.2px;background:rgba(11,17,22,.88);border:1px solid #3B4A58;color:#DCE6EF;
+    cursor:pointer;backdrop-filter:blur(4px)}
+  .chip .cdot{width:5px;height:5px;border-radius:50%;background:var(--accent)}
+  .chip.r1{left:30%;top:39%}
+  .chip.r2{left:23%;top:60%}
+  .chip.k1{left:76%;top:34%;border-color:#6B3B3F}
+  .chip.k1 .cdot{background:var(--protect)}
+  .chip.active{outline:1px solid var(--accent);box-shadow:0 0 0 3px rgba(61,214,196,.12)}
+  .chip.k1.active{outline-color:var(--protect);box-shadow:0 0 0 3px rgba(255,107,107,.12)}
+  .hud{position:absolute;z-index:8;font-size:9px;color:#8B98A8;background:rgba(12,17,23,.72);
+    border:1px solid #24303C;border-radius:7px;padding:4px 7px;backdrop-filter:blur(5px)}
+  .hud.left{left:14px;bottom:12px}
+  .hud.right{right:14px;bottom:12px;display:flex;gap:8px;align-items:center}
+  .hud b{color:#C9D4E0;font-weight:550;font-variant-numeric:tabular-nums}
+  .zoomstack{position:absolute;right:14px;top:14px;z-index:8;display:flex;flex-direction:column;gap:4px}
+  .zoomstack .icon-btn{background:rgba(12,17,23,.78);border-color:#24303C}
+  .compare-pill{position:absolute;left:50%;top:12px;transform:translateX(-50%);z-index:9;
+    display:flex;align-items:center;gap:6px;padding:4px 8px;border-radius:999px;background:rgba(12,17,23,.82);
+    border:1px solid #2B3947;font-size:9px;color:#AEBAC8;backdrop-filter:blur(6px)}
+  .compare-pill input{width:70px;accent-color:var(--accent);display:none}
+  .photo.compare + .compare-pill input{display:inline-block}
+  .note-badge{position:absolute;left:14px;top:14px;z-index:8;font-size:8px;letter-spacing:.4px;
+    color:#7C8A9A;border:1px solid #2A3542;border-radius:5px;padding:2px 5px;background:rgba(12,17,23,.6)}
+
+  .filmstrip{display:flex;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid #1B232D;background:#0C1117}
+  .film-title{font-size:10px;color:var(--muted);margin-right:2px;white-space:nowrap}
+  .versions{display:flex;gap:8px;align-items:center;min-width:0}
+  .version{position:relative;width:86px;height:58px;border-radius:8px;border:1px solid #2A3542;overflow:hidden;
+    background:#151D26;cursor:pointer;flex:0 0 auto}
+  .version .thumb{position:absolute;inset:0;background:linear-gradient(145deg,#2A3A38,#18232A)}
+  .version .thumb::after{content:"";position:absolute;inset:0;background:radial-gradient(ellipse at 50% 35%,rgba(255,236,208,.5),transparent 55%)}
+  .version.v1 .thumb{background:linear-gradient(145deg,#3A4248,#1B2329)}
+  .version.v1 .thumb::after{background:radial-gradient(ellipse at 50% 32%,rgba(231,239,247,.42),transparent 55%)}
+  .version.v2 .thumb{background:linear-gradient(145deg,#5A4B3A,#211C19)}
+  .version.v4 .thumb{background:linear-gradient(145deg,#3A5751,#172421)}
+  .version .vlabel{position:absolute;left:5px;bottom:4px;z-index:2;font-size:8px;color:#E6EEF5;
+    background:rgba(8,12,16,.72);border-radius:4px;padding:1px 4px}
+  .version .check{position:absolute;right:4px;top:4px;z-index:2;width:13px;height:13px;border-radius:50%;
+    background:var(--success);color:#06231A;display:none;align-items:center;justify-content:center;font-size:9px;font-weight:800}
+  .version.accepted .check{display:flex}
+  .version.selected{border-color:var(--accent);box-shadow:0 0 0 2px rgba(61,214,196,.18)}
+  .version.pending{border-style:dashed;color:var(--muted);display:flex;align-items:center;justify-content:center;
+    font-size:9px;gap:4px}
+  .film-actions{margin-left:auto;display:flex;gap:7px;align-items:center}
+
+  .inspector{border-left:1px solid var(--border-soft);background:var(--bg-panel);display:flex;flex-direction:column;min-height:0}
+  .insp-tabs{display:flex;align-items:center;gap:2px;padding:8px 10px 0;border-bottom:1px solid var(--border-soft)}
+  .insp-tab{border:0;background:transparent;color:var(--muted);padding:8px 9px 9px;font-size:10px;border-bottom:2px solid transparent}
+  .insp-tab b{font-weight:600;color:#7E8A9B;margin-left:3px}
+  .insp-tab.active{color:var(--text);border-bottom-color:var(--accent)}
+  .insp-tab.active b{color:var(--accent)}
+  .insp-scroll{overflow:auto;padding:9px 10px;display:flex;flex-direction:column;gap:7px;min-height:0}
+  .insp-scroll::-webkit-scrollbar{width:6px}.insp-scroll::-webkit-scrollbar-thumb{background:#2A3542;border-radius:3px}
+  .tab-panel{display:flex;flex-direction:column;gap:9px}
+  .tab-panel[hidden]{display:none}
+  .jobcard{border:1px solid var(--border);background:#141C24;border-radius:11px;padding:9px 10px;display:flex;flex-direction:column;gap:6px}
+  .jobhead{display:flex;align-items:center;gap:7px;font-size:10px;color:var(--text-2)}
+  .jobhead b{color:var(--text);font-weight:550}
+  .jobhead .right{margin-left:auto;font-size:9px;color:var(--success)}
+  .jobsub{display:flex;align-items:center;gap:6px;font-size:9px;color:var(--muted)}
+  .meter{height:4px;border-radius:3px;background:#27313C;overflow:hidden;display:none}
+  .meter i{display:block;height:100%;width:38%;background:linear-gradient(90deg,#2BB7A8,#66E8D9);border-radius:3px;
+    transition:width .3s ease}
+  .jobcard.running .meter{display:block}
+  .jobcard.running .right{color:var(--accent)}
+  .jobcard.done .right{color:var(--success)}
+
+  .region-card{border:1px solid var(--border);background:var(--bg-card);border-radius:12px;padding:8px;display:flex;flex-direction:column;gap:6px;cursor:pointer}
+  .region-card.selected{border-color:#2E6E67;box-shadow:0 0 0 1px rgba(61,214,196,.15) inset;background:#1B262B}
+  .region-card.keepcard{background:#231A1B;border-color:#4A3032}
+  .region-card:not(.selected) .field-label,
+  .region-card:not(.selected) .prompt,
+  .region-card:not(.selected) .chips,
+  .region-card:not(.selected) .slider-row,
+  .region-card:not(.selected) .card-actions,
+  .region-card:not(.selected) .keepnote{display:none}
+  .region-card .collapsed-preview{display:none}
+  .region-card:not(.selected) .collapsed-preview{display:-webkit-box;font-size:9px;line-height:1.5;color:#8E9DAD;
+    overflow:hidden;-webkit-line-clamp:1;-webkit-box-orient:vertical}
+  .region-card:not(.selected){padding:8px}
+  .region-card:not(.selected) .region-meta{margin-bottom:0}
+  .region-head{display:flex;align-items:center;gap:6px}
+  .rchip{font-size:9px;font-weight:700;letter-spacing:.3px;border-radius:5px;padding:2px 5px;background:#153B37;color:#74E7DA;border:1px solid #2B6E66}
+  .rchip.red{background:#3A2224;color:#FF9A9A;border-color:#6A3A3E}
+  .region-title{flex:1;min-width:0;border:0;background:transparent;color:var(--text);font-size:11px;font-weight:600;padding:2px 0;outline:none}
+  .region-title:focus{background:#111820;border-radius:4px;box-shadow:0 0 0 1px #2E6E67}
+  .op-select{border:1px solid #2B3743;background:#131B23;color:#C9D5E2;border-radius:6px;font-size:9px;padding:3px 5px;outline:none}
+  .region-meta{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:9px}
+  .mask-thumb{width:28px;height:22px;border-radius:5px;border:1px solid #33404D;background:
+    radial-gradient(ellipse at 55% 45%,rgba(61,214,196,.65),rgba(61,214,196,.08) 58%,transparent 60%),#0F151B;flex:0 0 auto}
+  .field-label{font-size:9px;color:var(--muted);letter-spacing:.2px;margin-bottom:-2px}
+  .prompt{border:1px solid #2A3642;background:#111820;border-radius:8px;padding:7px 8px;color:#D7E1EB;
+    font-size:10px;line-height:1.5;resize:vertical;min-height:48px;outline:none;width:100%}
+  .prompt:focus{border-color:#2E6E67;box-shadow:0 0 0 2px rgba(61,214,196,.08)}
+  .prompt:disabled{opacity:.55;resize:none}
+  .chips{display:flex;flex-wrap:wrap;gap:4px}
+  .chip-suggest{border:1px solid #2A3743;background:#141C24;color:#9FB0C1;border-radius:999px;font-size:8px;padding:3px 7px}
+  .chip-suggest:hover{border-color:#3A5D59;color:#BFEFE8}
+  .slider-row{display:flex;align-items:center;gap:7px;font-size:9px;color:var(--muted)}
+  .slider-row input{flex:1;accent-color:var(--accent);height:3px}
+  .slider-row b{color:#C9D5E2;font-weight:550;min-width:28px;text-align:right;font-variant-numeric:tabular-nums}
+  .card-actions{display:flex;align-items:center;gap:6px;padding-top:1px}
+  .card-actions .ghost{flex:1;justify-content:center}
+  .text-danger{border:0;background:transparent;color:#A36A6D;font-size:9px;padding:4px 2px}
+  .text-danger:hover{color:#FF8D8D}
+  .keepnote{font-size:9px;color:#C79495;line-height:1.5;background:#2A1D1F;border:1px solid #4A3032;border-radius:7px;padding:5px 7px}
+  .lockline{display:flex;align-items:center;gap:5px;color:#E8A7A7;font-size:9px}
+  .lockline svg{width:12px;height:12px}
+  .section-label{font-size:9px;letter-spacing:.6px;color:#6D7A8A;text-transform:uppercase;margin:2px 2px 0}
+  .history-item{display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-bottom:1px solid #222C36}
+  .history-item:last-child{border-bottom:0}
+  .hist-dot{width:6px;height:6px;border-radius:50%;background:#3DD6C4;margin-top:4px;flex:0 0 auto}
+  .hist-main{flex:1;min-width:0}
+  .hist-title{font-size:10px;color:#D8E2EC}
+  .hist-meta{font-size:8px;color:var(--muted);margin-top:2px}
+  .hist-actions{display:flex;gap:4px}
+  .hist-actions button{border:0;background:transparent;color:#7F91A3;font-size:8px;padding:2px}
+  .hist-actions button:hover{color:var(--accent)}
+  .insp-actions{border-top:1px solid var(--border-soft);padding:9px 10px;display:flex;flex-direction:column;gap:6px;background:#121820}
+  .insp-actions .row{display:flex;gap:6px}
+  .insp-actions .primary{flex:1;justify-content:center}
+  .insp-actions .secondary{flex:0 0 112px;justify-content:center}
+  .hint{font-size:8px;color:#637081;text-align:center}
+
+  .statusbar{display:flex;align-items:center;gap:12px;padding:0 12px;background:#0B1015;border-top:1px solid #1B232D;font-size:8px;color:#667384}
+  .statusbar .grow{flex:1}
+  .statusbar .ok{color:#7FCDA4}
+  .statusbar .mcp{color:#8FE7D9}
+  .statusbar .sep{width:1px;height:10px;background:#25303C}
+
+  .modal{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;
+    background:rgba(3,6,9,.62);backdrop-filter:blur(3px)}
+  .modal.open{display:flex}
+  .dialog{width:430px;background:#151C24;border:1px solid #303C49;border-radius:14px;box-shadow:0 28px 80px rgba(0,0,0,.6);overflow:hidden}
+  .dialog-head{display:flex;align-items:center;justify-content:space-between;padding:13px 15px;border-bottom:1px solid #25303C}
+  .dialog-head b{font-size:13px}
+  .dialog-body{padding:13px 15px;display:flex;flex-direction:column;gap:12px}
+  .dialog-row{display:flex;flex-direction:column;gap:5px}
+  .dialog-row label{font-size:9px;color:#8997A7}
+  .seg2{display:flex;background:#111820;border:1px solid #2A3642;border-radius:8px;padding:2px;gap:2px}
+  .seg2 button{flex:1;border:0;background:transparent;color:#93A2B2;border-radius:6px;padding:6px;font-size:10px}
+  .seg2 button.active{background:#24303C;color:#E8EDF4}
+  .checkrow{display:flex;align-items:center;gap:7px;font-size:10px;color:#B9C5D2}
+  .checkrow input{accent-color:var(--accent)}
+  .pathbox{display:flex;align-items:center;gap:6px;background:#10161D;border:1px solid #2A3642;border-radius:7px;padding:6px 8px;font-size:9px;color:#8D9AAA}
+  .pathbox span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dialog-foot{display:flex;justify-content:flex-end;gap:7px;padding:11px 15px;border-top:1px solid #25303C;background:#121820}
+
+  .popover{position:fixed;z-index:60;display:none;width:300px;background:#151C24;border:1px solid #34414E;
+    border-radius:12px;box-shadow:0 20px 60px rgba(0,0,0,.6);padding:12px}
+  .popover.open{display:block}
+  .popover h4{margin:0 0 8px;font-size:11px;font-weight:600}
+  .popover .kv{display:flex;justify-content:space-between;gap:8px;font-size:9px;color:#8E9CAC;padding:4px 0;border-bottom:1px solid #222C36}
+  .popover .kv b{color:#D5E0EA;font-weight:500;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:9px}
+  .popover .p-actions{display:flex;gap:6px;margin-top:9px}
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(8px);z-index:70;background:#EEF5F2;color:#0B1A16;
+    padding:8px 13px;border-radius:9px;font-size:11px;font-weight:550;box-shadow:0 12px 30px rgba(0,0,0,.35);
+    opacity:0;pointer-events:none;transition:.2s ease}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
+</style>
+</head>
+<body>
+<div class="viewport" id="viewport">
+  <div class="app" id="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8V5h3M17 5h3v3M20 16v3h-3M7 19H4v-3"/><path d="M8 13c2-4 6-5 8-3"/></svg>
+        </div>
+        <span class="brand-name">MaskCanvas</span>
+        <span class="beta">BETA</span>
+      </div>
+      <div class="project-chip"><b>家庭照 · 法式换装</b><span>3376 × 6000</span><span class="local">本地</span></div>
+      <div class="top-center">
+        <button class="icon-btn" title="撤销 (⌘Z)" aria-label="撤销"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h9a6 6 0 0 1 6 6v0a6 6 0 0 1-6 6h-2"/></svg></button>
+        <button class="icon-btn" title="重做 (⇧⌘Z)" aria-label="重做" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M15 14l5-5-5-5"/><path d="M20 9h-9a6 6 0 0 0-6 6v0a6 6 0 0 0 6 6h2"/></svg></button>
+        <div class="divider-v"></div>
+        <div class="seg" role="group" aria-label="画布对比模式">
+          <button data-mode="result" class="active">结果</button>
+          <button data-mode="compare">对比</button>
+          <button data-mode="before">原图</button>
+        </div>
+        <div class="divider-v"></div>
+        <button class="icon-btn" id="zoomOut" title="缩小 (-)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4M8 11h6"/></svg></button>
+        <span class="zoom-read" id="zoomRead">62%</span>
+        <button class="icon-btn" id="zoomIn" title="放大 (+)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4 4M8 11h6M11 8v6"/></svg></button>
+        <button class="icon-btn" id="fitBtn" title="适应窗口 (0)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+      </div>
+      <div class="top-right">
+        <button class="pill agent" id="agentPill"><span class="dot"></span>MCP 已连接 · 5 区域</button>
+        <span class="pill queue"><span class="dot"></span>H3 未占用</span>
+        <button class="btn small" id="exportBtn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 20h16"/></svg>导出</button>
+        <div class="avatar" title="本地用户">张</div>
+      </div>
+    </header>
+
+    <div class="main">
+      <aside class="toolrail" aria-label="工具栏">
+        <button class="tool" data-tool="select" title="选择 / 移动 (V)" aria-label="选择 / 移动"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M5 3l14 9-6 1.2L10 20z"/></svg><span class="key">V</span></button>
+        <button class="tool" data-tool="rect" title="矩形选区 (M)" aria-label="矩形选区"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="5" width="16" height="14" rx="2"/></svg><span class="key">M</span></button>
+        <button class="tool active" data-tool="lasso" title="套索 (L)" aria-label="套索"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4c-3 2-4 7-1 10 3 4 10 4 12 0 2-4-1-8-5-8s-8 2-7 7c1 4 5 7 9 6"/><path d="M7 19l-1 2"/></svg><span class="key">L</span></button>
+        <button class="tool" data-tool="brush" title="画笔 (B)" aria-label="画笔"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l4-1 10-10-3-3L5 16z"/><path d="M14 6l3 3"/></svg><span class="key">B</span></button>
+        <button class="tool" data-tool="eraser" title="橡皮 (E)" aria-label="橡皮"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16l8-8 6 6-8 8H6z"/><path d="M11 9l6 6"/></svg><span class="key">E</span></button>
+        <div class="tool-sep"></div>
+        <button class="tool" data-tool="sam" title="智能选择 · SAM2 (S)" aria-label="智能选择"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6z"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8z"/></svg><span class="key">S</span></button>
+        <button class="tool" data-tool="hand" title="抓手 (H / 空格)" aria-label="抓手"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 12V6a1.6 1.6 0 0 1 3.2 0v5M10.2 11V4.8a1.6 1.6 0 0 1 3.2 0V11M13.4 11V6.2a1.6 1.6 0 0 1 3.2 0V13M16.6 10.5V8.4a1.6 1.6 0 0 1 3.2 0V15c0 3.3-2.2 6-5.6 6H12c-2 0-3.4-.8-4.5-2.4L4.6 14a1.7 1.7 0 0 1 2.7-2l2 2.3"/></svg><span class="key">H</span></button>
+        <div class="rail-bottom">
+          <div class="swatch" title="编辑蒙版颜色"></div>
+          <div class="opacity-mini" title="蒙版透明度 38%"></div>
+          <button class="icon-btn" title="快捷键帮助 (?)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.2a2.6 2.6 0 1 1 4.2 2.1c-.9.7-1.8 1.1-1.8 2.2M12 17h.01"/></svg></button>
+        </div>
+      </aside>
+
+      <main class="stage">
+        <div class="stage-head">
+          <span class="crumb">项目 / <b>家庭照 · 法式换装</b></span>
+          <div class="seg" role="group" aria-label="视图模式">
+            <button class="active" data-view="edit">编辑</button>
+            <button data-view="review">验收</button>
+          </div>
+          <div class="right">
+            <span class="tiny">Qwen-Image 2.1 · 1280px</span>
+            <span class="divider-v"></span>
+            <span class="tiny">自动保存</span>
+          </div>
+        </div>
+
+        <div class="canvas-wrap">
+          <div class="note-badge">UI MOCKUP · 示意构图</div>
+          <div class="artboard" id="artboard">
+            <div class="photo" id="photo">
+              <img class="p-layer before" src="portrait-placeholder.png" alt="原图（示意图）" />
+              <img class="p-layer after" src="portrait-placeholder.png" alt="当前精修结果（示意图）" />
+              <svg class="mask-layer" viewBox="0 0 420 560" aria-hidden="true">
+                <g data-mask="r1">
+                  <path class="edit focus" d="M175 172 L212 178 L215 198 L208 215 L192 219 L170 200 Z"/>
+                </g>
+                <g data-mask="r2">
+                  <path class="edit" d="M115 228 L205 218 L215 330 L175 558 L96 558 L104 330 Z"/>
+                  <path class="edit" d="M215 465 L330 460 L335 558 L175 558 L205 485 Z"/>
+                </g>
+                <g data-mask="k1">
+                  <ellipse class="keep" cx="265" cy="245" rx="42" ry="44"/>
+                </g>
+              </svg>
+              <div class="compare-line" aria-hidden="true"></div>
+              <button class="chip r1 active" data-region="r1"><span class="cdot"></span>R1 · 下颌</button>
+              <button class="chip r2" data-region="r2"><span class="cdot"></span>R2 · 造型</button>
+              <button class="chip k1" data-region="k1"><span class="cdot"></span>K1 · 宝宝</button>
+            </div>
+          </div>
+          <div class="compare-pill">
+            <span>对比</span>
+            <input id="splitRange" type="range" min="12" max="88" value="52" aria-label="对比分割位置" />
+          </div>
+          <div class="hud left"><b>62%</b> · 3376×6000 · 选区 <b>12.4%</b></div>
+          <div class="hud right"><span>空格 平移</span><span>+ / − 缩放</span><span>L 套索</span></div>
+          <div class="zoomstack">
+            <button class="icon-btn" id="zoomStackIn" title="放大"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button class="icon-btn" id="zoomStackOut" title="缩小"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 12h14"/></svg></button>
+            <button class="icon-btn" id="zoomStackFit" title="适应窗口"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+          </div>
+        </div>
+
+        <div class="filmstrip">
+          <span class="film-title">版本</span>
+          <div class="versions" id="versions">
+            <button class="version v1" data-version="v1"><div class="thumb"></div><span class="vlabel">V1 · 原图</span></button>
+            <button class="version v2 accepted" data-version="v2"><div class="thumb"></div><span class="vlabel">V2 · 初稿</span><span class="check">✓</span></button>
+            <button class="version selected" data-version="v3"><div class="thumb"></div><span class="vlabel">V3 · 当前</span><span class="check">✓</span></button>
+            <button class="version v4" data-version="v4"><div class="thumb"></div><span class="vlabel">V4 · 候选</span></button>
+            <button class="version pending" title="生成新版本">＋ 新版本</button>
+          </div>
+          <div class="film-actions">
+            <button class="btn ghost small" id="compareFilm">对比原图</button>
+            <button class="btn primary small" id="acceptBtn">接受此版本</button>
+          </div>
+        </div>
+      </main>
+
+      <aside class="inspector">
+        <div class="insp-tabs" role="tablist">
+          <button class="insp-tab active" data-tab="regions" role="tab">编辑区域 <b>2</b></button>
+          <button class="insp-tab" data-tab="protect" role="tab">保护 <b>3</b></button>
+          <button class="insp-tab" data-tab="history" role="tab">历史 <b>4</b></button>
+        </div>
+
+        <div class="insp-scroll">
+          <div class="tab-panel" data-panel="regions">
+            <div class="jobcard" id="jobCard">
+              <div class="jobhead"><span class="dot"></span><b>本地 GPU · Qwen-Image 2.1</b><span class="right" id="jobState">空闲</span></div>
+              <div class="jobsub"><span>H3 未占用</span><span>·</span><span>预计 25–40 秒</span></div>
+              <div class="meter"><i id="jobMeter"></i></div>
+            </div>
+
+            <div class="region-card selected" data-card="r1" role="button" tabindex="0">
+              <div class="region-head">
+                <span class="rchip">R1</span>
+                <input class="region-title" value="下颌 / 颈线" aria-label="区域名称" />
+                <select class="op-select" aria-label="操作"><option>精修</option><option>替换</option><option>移除</option><option>换装</option></select>
+                <button class="icon-btn eye" data-eye="r1" title="显示/隐藏蒙版"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.6"/></svg></button>
+                <button class="icon-btn" title="删除区域"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13"/></svg></button>
+              </div>
+              <div class="region-meta"><span class="mask-thumb"></span><span>套索 · 羽化 18px · 覆盖 4.2%</span></div>
+              <span class="field-label">Prompt</span>
+              <textarea class="prompt" id="promptR1" rows="2">收窄下颌线，减轻双下巴，保留脸型、眼镜与表情。</textarea>
+              <div class="chips">
+                <button class="chip-suggest" data-append="r1" data-text="自然收下颌">自然收下颌</button>
+                <button class="chip-suggest" data-append="r1" data-text="保留眼镜">保留眼镜</button>
+                <button class="chip-suggest" data-append="r1" data-text="不要磨皮">不要磨皮</button>
+              </div>
+              <div class="slider-row"><span>强度</span><input type="range" value="80" min="0" max="100" data-range="r1" /><b data-val="r1">80%</b></div>
+              <div class="card-actions"><button class="btn ghost small" data-preview="r1">预览此区域</button></div>
+            </div>
+
+            <div class="region-card" data-card="r2" role="button" tabindex="0">
+              <div class="region-head">
+                <span class="rchip">R2</span>
+                <input class="region-title" value="上装 / 下装" aria-label="区域名称" />
+                <select class="op-select" aria-label="操作"><option>替换</option><option>精修</option><option>移除</option><option>换装</option></select>
+                <button class="icon-btn eye" data-eye="r2" title="显示/隐藏蒙版"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z"/><circle cx="12" cy="12" r="2.6"/></svg></button>
+                <button class="icon-btn" title="删除区域"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13"/></svg></button>
+              </div>
+              <div class="region-meta"><span class="mask-thumb"></span><span>画笔 · 羽化 12px · 覆盖 8.2%</span></div>
+              <div class="collapsed-preview">奶油真丝衬衫 + 象牙白长裙 + 裸色平底鞋</div>
+              <span class="field-label">Prompt</span>
+              <textarea class="prompt" id="promptR2" rows="2">奶油真丝衬衫 + 象牙白高腰长裙 + 裸色平底鞋；保留宝宝与男士。</textarea>
+              <div class="chips">
+                <button class="chip-suggest" data-append="r2" data-text="法式优雅">法式优雅</button>
+                <button class="chip-suggest" data-append="r2" data-text="保留宝宝">保留宝宝</button>
+                <button class="chip-suggest" data-append="r2" data-text="自然褶皱">自然褶皱</button>
+              </div>
+              <div class="slider-row"><span>强度</span><input type="range" value="100" min="0" max="100" data-range="r2" /><b data-val="r2">100%</b></div>
+              <div class="card-actions"><button class="btn ghost small" data-preview="r2">预览此区域</button><button class="text-danger">删除</button></div>
+            </div>
+
+            <div class="section-label">保护区域</div>
+            <div class="region-card keepcard" data-card="k1" role="button" tabindex="0">
+              <div class="region-head"><span class="rchip red">K1</span><span style="flex:1;font-size:11px;font-weight:600">宝宝脸部</span><span class="lockline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>锁定</span></div>
+              <div class="collapsed-preview">保护宝宝脸部 · 生成时自动从蒙版扣除</div>
+              <div class="keepnote">此区域不会被模型修改；生成时自动从编辑蒙版中扣除。</div>
+            </div>
+
+            <div class="jobcard" style="background:#131A22">
+              <div class="jobhead"><b>生成参数</b><span class="right" style="color:var(--muted)">高级</span></div>
+              <div class="jobsub">Qwen 2.1 · 1280px · 种子自动</div>
+              <div class="jobsub">Inpaint Crop/Stitch · 羽化 18px</div>
+            </div>
+          </div>
+
+          <div class="tab-panel" data-panel="protect" hidden>
+            <div class="jobcard"><div class="jobhead"><span class="dot red"></span><b>保护区域</b><span class="right" style="color:var(--protect)">3 个</span></div><div class="jobsub">保护优先于任何 prompt；生成和合成都会跳过。</div></div>
+            <div class="region-card keepcard"><div class="region-head"><span class="rchip red">K1</span><span style="flex:1;font-size:11px;font-weight:600">宝宝脸部</span><span class="lockline">完全锁定</span></div><div class="keepnote">框选宝宝的脸、头发与耳朵。任何编辑区域与它重叠时，重叠部分自动排除。</div></div>
+            <div class="region-card keepcard"><div class="region-head"><span class="rchip red">K2</span><span style="flex:1;font-size:11px;font-weight:600">男士 / 手臂</span><span class="lockline">完全锁定</span></div><div class="keepnote">右侧男士的 T 恤、短裤、手表和手。</div></div>
+            <div class="region-card keepcard"><div class="region-head"><span class="rchip red">K3</span><span style="flex:1;font-size:11px;font-weight:600">背景 / 气泡</span><span class="lockline">完全锁定</span></div><div class="keepnote">人物轮廓外的草地、树木与气泡。</div></div>
+          </div>
+
+          <div class="tab-panel" data-panel="history" hidden>
+            <div class="history-item"><span class="hist-dot"></span><div class="hist-main"><div class="hist-title">V3 · 当前预览</div><div class="hist-meta">Qwen 2.1 · 1280px · seed 9512 · 23s</div></div><div class="hist-actions"><button>对比</button><button>接受</button></div></div>
+            <div class="history-item"><span class="hist-dot" style="background:var(--success)"></span><div class="hist-main"><div class="hist-title">V2 · 已接受</div><div class="hist-meta">Qwen 2.1 · 1280px · seed 9501 · 31s</div></div><div class="hist-actions"><button>查看</button><button>恢复</button></div></div>
+            <div class="history-item"><span class="hist-dot" style="background:#596777"></span><div class="hist-main"><div class="hist-title">V1 · 原图</div><div class="hist-meta">3376×6000 · 原始文件</div></div><div class="hist-actions"><button>查看</button></div></div>
+            <div class="history-item"><span class="hist-dot" style="background:#596777"></span><div class="hist-main"><div class="hist-title">初始蒙版</div><div class="hist-meta">3 个区域 · 2026-10-21 14:08</div></div><div class="hist-actions"><button>查看</button></div></div>
+          </div>
+        </div>
+
+        <div class="insp-actions">
+          <div class="row">
+            <button class="btn primary" id="generateBtn">生成预览 <span style="font-size:9px;opacity:.7;margin-left:3px">Enter</span></button>
+            <button class="btn secondary" id="applyBtn" disabled>应用到图像</button>
+          </div>
+          <div class="hint" id="actionHint">仅处理选中区域 · 输出 1280px · 本地生成</div>
+        </div>
+      </aside>
+    </div>
+
+    <footer class="statusbar">
+      <span>已自动保存 · 14:32</span>
+      <span class="sep"></span>
+      <span class="mcp">MCP 127.0.0.1:7317 · 已连接</span>
+      <span class="sep"></span>
+      <span class="ok">Agent 已读取 5 个区域</span>
+      <span class="grow"></span>
+      <span>本地处理 · 图片不上传</span>
+      <span class="sep"></span>
+      <span>v0.1 design</span>
+    </footer>
+  </div>
+</div>
+
+<div class="modal" id="exportModal" role="dialog" aria-modal="true" aria-label="导出">
+  <div class="dialog">
+    <div class="dialog-head"><b>导出</b><button class="icon-btn" data-close-export aria-label="关闭">✕</button></div>
+    <div class="dialog-body">
+      <div class="dialog-row"><label>格式</label><div class="seg2"><button class="active">PNG</button><button>JPG · 95</button></div></div>
+      <div class="dialog-row"><label>尺寸</label><div class="seg2"><button class="active">原尺寸 3376×6000</button><button>长边 4096</button><button>长边 2048</button></div></div>
+      <div class="dialog-row"><label>附带</label>
+        <label class="checkrow"><input type="checkbox" checked /> regions.json（区域与提示词）</label>
+        <label class="checkrow"><input type="checkbox" checked /> masks/（全分辨率蒙版）</label>
+        <label class="checkrow"><input type="checkbox" /> versions/（历史版本）</label>
+      </div>
+      <div class="dialog-row"><label>导出到</label><div class="pathbox"><span>~/Pictures/MaskCanvas/家庭照-法式换装/</span><span>更改</span></div></div>
+      <div class="hint" style="text-align:left;color:#7FCDA4">全部在本地完成，不会上传图片。</div>
+    </div>
+    <div class="dialog-foot"><button class="btn ghost" data-close-export>取消</button><button class="btn primary" id="exportConfirm">导出</button></div>
+  </div>
+</div>
+
+<div class="popover" id="agentPopover">
+  <h4>Agent 连接</h4>
+  <div class="kv"><span>MCP endpoint</span><b>127.0.0.1:7317/mcp</b></div>
+  <div class="kv"><span>项目 ID</span><b>family-portrait</b></div>
+  <div class="kv"><span>已读取</span><b>5 regions · 2 edit / 3 keep</b></div>
+  <div class="p-actions"><button class="btn small" id="copyMcp">复制 MCP 配置</button><button class="btn small ghost" id="copyCmd">复制启动命令</button></div>
+</div>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+  const $ = (s, el = document) => el.querySelector(s);
+  const $$ = (s, el = document) => Array.from(el.querySelectorAll(s));
+  const state = { tool: 'lasso', selected: 'r1', compare: false, generating: false, zoom: 62, version: 'v3' };
+
+  // Fit the 1360x860 design into the viewport.
+  const viewport = $('#viewport'), app = $('#app');
+  function fitApp() {
+    const s = Math.min(1, (window.innerWidth - 24) / 1360);
+    app.style.transform = `scale(${s})`;
+    viewport.style.height = `${860 * s + 32}px`;
+  }
+  window.addEventListener('resize', fitApp);
+  fitApp();
+
+  function toast(msg) {
+    const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+    clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 2200);
+  }
+
+  // Tools
+  $$('.tool').forEach(btn => btn.addEventListener('click', () => {
+    $$('.tool').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    state.tool = btn.dataset.tool;
+  }));
+
+  // Region selection
+  const regionMeta = {
+    r1: { tab: 'regions' }, r2: { tab: 'regions' }, k1: { tab: 'protect' }
+  };
+  function selectRegion(id) {
+    state.selected = id;
+    $$('.region-card').forEach(c => c.classList.toggle('selected', c.dataset.card === id));
+    $$('.chip').forEach(c => c.classList.toggle('active', c.dataset.region === id));
+    if (regionMeta[id]?.tab) switchTab(regionMeta[id].tab);
+    updateActionHint();
+  }
+  $$('.region-card').forEach(c => c.addEventListener('click', (e) => {
+    if (e.target.closest('button,select,input,textarea')) return;
+    selectRegion(c.dataset.card);
+  }));
+  $$('.chip').forEach(c => c.addEventListener('click', () => selectRegion(c.dataset.region)));
+
+  // Mask visibility
+  $$('[data-eye]').forEach(btn => btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const id = btn.dataset.eye;
+    const g = document.querySelector(`[data-mask="${id}"]`);
+    if (!g) return;
+    g.style.display = g.style.display === 'none' ? '' : 'none';
+    btn.style.opacity = g.style.display === 'none' ? '.4' : '1';
+  }));
+
+  // Tabs
+  function switchTab(name) {
+    $$('.insp-tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+    $$('.tab-panel').forEach(p => p.hidden = p.dataset.panel !== name);
+  }
+  $$('.insp-tab').forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
+
+  // Compare / view modes
+  const photo = $('#photo'), split = $('#splitRange');
+  function setCompare(on) {
+    state.compare = on;
+    photo.classList.toggle('compare', on);
+    $$('[data-mode]').forEach(b => b.classList.toggle('active', on ? b.dataset.mode === 'compare' : b.dataset.mode === 'result'));
+  }
+  $$('[data-mode]').forEach(b => b.addEventListener('click', () => {
+    if (b.dataset.mode === 'compare') setCompare(true);
+    else if (b.dataset.mode === 'before') { setCompare(true); split.value = 88; split.dispatchEvent(new Event('input')); }
+    else setCompare(false);
+  }));
+  split.addEventListener('input', () => photo.style.setProperty('--split', split.value + '%'));
+
+  // Prompt chips
+  $$('[data-append]').forEach(b => b.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const id = b.dataset.append;
+    const ta = id === 'r2' ? $('#promptR2') : $('#promptR1');
+    const addition = b.dataset.text;
+    if (ta.value.includes(addition)) { toast('已经在提示词里了'); return; }
+    ta.value = ta.value.trim().replace(/[。；;]$/, '') + '；' + addition + '。';
+    ta.focus();
+    toast('已加入提示词');
+  }));
+
+  // Sliders
+  $$('[data-range]').forEach(r => r.addEventListener('input', () => {
+    const id = r.dataset.range; const out = document.querySelector(`[data-val="${id}"]`);
+    if (out) out.textContent = r.value + '%';
+  }));
+
+  // Generate (fake job for mockup)
+  const gen = $('#generateBtn'), jobCard = $('#jobCard'), jobState = $('#jobState'), meter = $('#jobMeter');
+  function setJob(stateName, pct) {
+    jobCard.classList.remove('running', 'done');
+    if (stateName === 'running') jobCard.classList.add('running');
+    if (stateName === 'done') jobCard.classList.add('done');
+    jobState.textContent = stateName === 'idle' ? '空闲' : stateName === 'running' ? '生成中' : '已完成';
+    if (pct != null) meter.style.width = pct + '%';
+  }
+  function startGenerate() {
+    if (state.generating) { toast('任务已在生成中'); return; }
+    state.generating = true; setJob('running', 8);
+    gen.textContent = '生成中…';
+    $('#applyBtn').disabled = true;
+    $('#actionHint').textContent = 'Qwen 正在处理选中区域 · 请稍候';
+    let p = 8;
+    const t = setInterval(() => {
+      p = Math.min(92, p + Math.random() * 16);
+      setJob('running', p);
+    }, 380);
+    setTimeout(() => {
+      clearInterval(t); setJob('done', 100);
+      state.generating = false; gen.textContent = '重新生成';
+      $('#applyBtn').disabled = false;
+      $('#actionHint').textContent = '预览完成 · 可对比后接受或继续修改';
+      $$('.version').forEach(v => v.classList.remove('selected'));
+      const v4 = document.querySelector('[data-version="v4"]');
+      if (v4) v4.classList.add('selected');
+      toast('V4 预览已生成 · 23s');
+    }, 2800);
+  }
+  gen.addEventListener('click', startGenerate);
+  $$('[data-preview]').forEach(b => b.addEventListener('click', (e) => { e.stopPropagation(); startGenerate(); }));
+
+  // Apply / accept
+  $('#applyBtn').addEventListener('click', () => toast('已应用到图像 · 新版本 V5'));
+  $('#acceptBtn').addEventListener('click', () => {
+    const sel = document.querySelector('.version.selected');
+    if (sel) { sel.classList.add('accepted'); toast('已接受当前版本'); }
+  });
+  $('#compareFilm').addEventListener('click', () => { setCompare(!state.compare); split.value = 52; split.dispatchEvent(new Event('input')); });
+
+  // Versions
+  $$('.version[data-version]').forEach(v => v.addEventListener('click', () => {
+    $$('.version').forEach(x => x.classList.remove('selected'));
+    v.classList.add('selected'); state.version = v.dataset.version;
+    toast(`${v.dataset.version.toUpperCase()} 已选中`);
+  }));
+
+  // Zoom
+  function setZoom(z) {
+    state.zoom = Math.max(20, Math.min(140, z));
+    $('#zoomRead').textContent = state.zoom + '%';
+    $('#artboard').style.transform = `scale(${0.82 + state.zoom / 500})`;
+  }
+  $('#zoomIn').addEventListener('click', () => setZoom(state.zoom + 10));
+  $('#zoomOut').addEventListener('click', () => setZoom(state.zoom - 10));
+  $('#fitBtn').addEventListener('click', () => setZoom(62));
+  $('#zoomStackIn').addEventListener('click', () => setZoom(state.zoom + 10));
+  $('#zoomStackOut').addEventListener('click', () => setZoom(state.zoom - 10));
+  $('#zoomStackFit').addEventListener('click', () => setZoom(62));
+
+  // Export modal
+  const modal = $('#exportModal');
+  $('#exportBtn').addEventListener('click', () => modal.classList.add('open'));
+  $$('[data-close-export]').forEach(b => b.addEventListener('click', () => modal.classList.remove('open')));
+  modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.remove('open'); });
+  $('#exportConfirm').addEventListener('click', () => { modal.classList.remove('open'); toast('已导出到 ~/Pictures/MaskCanvas/家庭照-法式换装/'); });
+
+  // Agent popover
+  const pop = $('#agentPopover'), agentPill = $('#agentPill');
+  agentPill.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const r = agentPill.getBoundingClientRect();
+    pop.style.left = Math.max(12, Math.min(window.innerWidth - 312, r.right - 300)) + 'px';
+    pop.style.top = (r.bottom + 8) + 'px';
+    pop.classList.toggle('open');
+  });
+  document.addEventListener('click', (e) => { if (!pop.contains(e.target) && e.target !== agentPill) pop.classList.remove('open'); });
+  $('#copyMcp').addEventListener('click', () => toast('已复制 MCP 配置'));
+  $('#copyCmd').addEventListener('click', () => toast('已复制启动命令'));
+
+  // Action hint
+  function updateActionHint() {
+    $('#actionHint').textContent = state.selected === 'k1'
+      ? '保护区域不会被生成；选择编辑区域后生成'
+      : '仅处理选中区域 · 输出 1280px · 本地生成';
+  }
+
+  // Keyboard shortcuts (mockup)
+  document.addEventListener('keydown', (e) => {
+    if (e.target.matches('input,textarea,select')) return;
+    const k = e.key.toLowerCase();
+    const map = { v: 'select', m: 'rect', l: 'lasso', b: 'brush', e: 'eraser', s: 'sam', h: 'hand' };
+    if (map[k]) { document.querySelector(`[data-tool="${map[k]}"]`)?.click(); }
+    if (k === 'enter') startGenerate();
+    if (k === '\\') setCompare(true);
+    if (k === '0') setZoom(62);
+    if (k === '1') setZoom(100);
+  });
+  document.addEventListener('keyup', (e) => { if (e.key === '\\') setCompare(false); });
+
+  // Init
+  selectRegion('r1');
+  setZoom(62);
+</script>
+</body>
+</html>

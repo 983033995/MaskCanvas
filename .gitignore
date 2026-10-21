@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+._*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# Node (app/ and server/ will live here)
+node_modules/
+dist/
+build/
+*.log
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# MaskCanvas project store — never commit user photos, masks or versions
+projects/
+
+# Design exploration output (AI-generated mockup studies)
+design/generated/
