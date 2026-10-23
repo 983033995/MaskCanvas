@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Point, Region, Shape } from '../packages/shared/types';
 import { imageGeometry, sourcePoint, screenPoint, type View } from './canvas-geometry';
-import { renderMasks, EDIT_COLOR, KEEP_COLOR } from './canvas-render';
-import { buildEdgeMap, snapToEdge, traceEdge, type EdgeMap } from './magnetic-lasso';
+import { renderMasks, drawContextRect, EDIT_COLOR } from './canvas-render';
+import { buildEdgeMap, snapToEdge, didSnapToEdge, traceEdge, type EdgeMap } from './magnetic-lasso';
 
 export type Tool = 'select' | 'brush' | 'erase' | 'rect' | 'polygon' | 'magnetic' | 'lasso' | 'move';
 export type AnnotationKind = 'edit' | 'keep';
@@ -91,8 +91,8 @@ export function CanvasEditor(props: CanvasEditorProps) {
   const [fitLabel, setFitLabel] = useState('…');
   const [lassoCount, setLassoCount] = useState(0);
   const [edgeError, setEdgeError] = useState('');
-  const [snapRadius, setSnapRadius] = useState(14);
-  const [contrast, setContrast] = useState(12);
+  const [snapRadius, setSnapRadius] = useState(10);
+  const [contrast, setContrast] = useState(28);
   const optionsRef = useRef({ snapRadius, contrast }); optionsRef.current = { snapRadius, contrast };
 
   const geometry = useCallback(() => {
@@ -115,13 +115,7 @@ export function CanvasEditor(props: CanvasEditorProps) {
       ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
       ctx.drawImage(image, g.x, g.y, p.width * g.scale, p.height * g.scale);
       const context = p.regions.find(region => region.id === p.activeRegionId)?.context;
-      if (p.showMasks && context) {
-        ctx.save(); ctx.strokeStyle = '#4d7276'; ctx.lineWidth = 1; ctx.setLineDash([7, 4]);
-        ctx.strokeRect(g.x + context.x * g.scale, g.y + context.y * g.scale, context.width * g.scale, context.height * g.scale);
-        ctx.setLineDash([]); ctx.fillStyle = '#395b5e'; ctx.font = '11px sans-serif';
-        ctx.fillText('模型观察范围', g.x + context.x * g.scale + 5, g.y + context.y * g.scale + 15);
-        ctx.restore();
-      }
+      if (p.showMasks && context) drawContextRect(ctx, g, context);
       const draft = draftRef.current;
       const shape = draft ? draftShape(draft) : null;
       let displayRegions = p.regions;
@@ -134,7 +128,7 @@ export function CanvasEditor(props: CanvasEditorProps) {
       }
       if (p.showMasks || draft) {
         maskRef.current ??= document.createElement('canvas'); tintRef.current ??= document.createElement('canvas');
-        renderMasks(ctx, maskRef.current, tintRef.current, displayRegions, g, dpr, p.width, p.height);
+        renderMasks(ctx, maskRef.current, tintRef.current, displayRegions, g, dpr, p.width, p.height, { activeRegionId: p.activeRegionId, previewFeather: true });
       }
       const lasso = lassoRef.current;
       const line = lasso ? [...lasso.points, ...lasso.preview.slice(1)] : draft?.tool === 'lasso' ? draft.points : [];
@@ -224,11 +218,20 @@ export function CanvasEditor(props: CanvasEditorProps) {
   const updateLasso = (raw: Point, freehand: boolean, anchor = false) => {
     const lasso = lassoRef.current; if (!lasso) return;
     const start = lasso.points.at(-1)!;
+    // Alt / freehand: cursor leads freely — no magnetic pull, no auto anchors.
     const map = lasso.tool === 'magnetic' && !freehand ? ensureEdges() : null;
-    const radius = optionsRef.current.snapRadius / geometry().scale;
-    const end = map ? snapToEdge(map, raw, radius, optionsRef.current.contrast / 100) : raw;
-    lasso.preview = map ? traceEdge(map, start, end, radius, optionsRef.current.contrast / 100) : [start, end];
-    if (anchor || lasso.tool === 'magnetic' && distance(start, end) * geometry().scale >= 16) commitPath(lasso, lasso.preview);
+    const scale = geometry().scale;
+    // snapRadius is screen px; convert to source px so the ring matches the search.
+    const radius = optionsRef.current.snapRadius / Math.max(0.001, scale);
+    const contrast = optionsRef.current.contrast / 100;
+    const end = map ? snapToEdge(map, raw, radius, contrast, { stickiness: 1.15, margin: 0.1 }) : raw;
+    const snapped = Boolean(map && didSnapToEdge(raw, end));
+    // Only live-wire when actually on an edge; otherwise rubber-band follows the cursor.
+    lasso.preview = map && snapped ? traceEdge(map, start, end, radius, contrast) : [start, end];
+    // Auto-fasteners only along a confident snapped edge, and less often than before (was 16px).
+    const travel = distance(start, end) * scale;
+    const autoAnchor = lasso.tool === 'magnetic' && snapped && !freehand && travel >= 52;
+    if (anchor || autoAnchor) commitPath(lasso, lasso.preview);
     scheduleDraw();
   };
   const finishLasso = () => {
@@ -236,7 +239,10 @@ export function CanvasEditor(props: CanvasEditorProps) {
     let points = [...lasso.points, ...lasso.preview.slice(1)];
     if (lasso.tool === 'magnetic' && points.length > 2) {
       const map = ensureEdges();
-      if (map) points.push(...traceEdge(map, points.at(-1)!, points[0], optionsRef.current.snapRadius / geometry().scale, optionsRef.current.contrast / 100).slice(1));
+      if (map) {
+        const closeRadius = optionsRef.current.snapRadius / Math.max(0.001, geometry().scale);
+        points.push(...traceEdge(map, points.at(-1)!, points[0], closeRadius, optionsRef.current.contrast / 100).slice(1));
+      }
     }
     lassoRef.current = null; setLassoCount(0);
     if (points.length >= 3 && points.length <= 10000) propsRef.current.onShape(lasso.regionId, lasso.kind, { type: 'polygon', points });
@@ -286,24 +292,33 @@ export function CanvasEditor(props: CanvasEditorProps) {
       if (lasso) updateLasso(point, event.altKey, true);
       else {
         const map = p.tool === 'magnetic' && !event.altKey ? ensureEdges() : null;
-        const start = map ? snapToEdge(map, point, optionsRef.current.snapRadius / geometry().scale, optionsRef.current.contrast / 100) : point;
+        const startRadius = optionsRef.current.snapRadius / Math.max(0.001, geometry().scale);
+        const start = map ? snapToEdge(map, point, startRadius, optionsRef.current.contrast / 100, { stickiness: 1.15, margin: 0.1 }) : point;
         lassoRef.current = { tool: p.tool, points: [start], preview: [], anchors: [0], regionId: p.activeRegionId, kind: p.annotationKind }; setLassoCount(1);
       }
       scheduleDraw(); return;
     }
     if (['brush', 'erase', 'rect', 'lasso'].includes(p.tool)) {
-      draftRef.current = { tool: p.tool, start: point, end: point, points: [point], radius: p.brushSize / 2, regionId: p.activeRegionId, kind: p.annotationKind };
+      // Alt while brushing temporarily erases (does not switch the rail tool).
+      const draftTool = p.tool === 'brush' && event.altKey ? 'erase' : p.tool;
+      draftRef.current = { tool: draftTool, start: point, end: point, points: [point], radius: p.brushSize / 2, regionId: p.activeRegionId, kind: p.annotationKind };
       event.currentTarget.setPointerCapture(event.pointerId); scheduleDraw();
     }
   };
   const onPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const drag = dragRef.current;
     if (drag) { viewRef.current.panX = drag.panX + event.clientX - drag.x; viewRef.current.panY = drag.panY + event.clientY - drag.y; scheduleDraw(); return; }
+    // Space held during an open lasso: wait for pan drag; do not drop anchors or extend the path.
+    if (spaceRef.current && lassoRef.current) { scheduleDraw(); return; }
     const raw = eventPoint(event);
     pointerRef.current = raw.x >= 0 && raw.y >= 0 && raw.x <= props.width && raw.y <= props.height ? raw : null;
     const point = clampPoint(raw), draft = draftRef.current;
     if (lassoRef.current) { updateLasso(point, event.altKey); return; }
     if (draft) {
+      // Live Alt toggles temporary erase while a brush stroke is in progress.
+      if ((draft.tool === 'brush' || draft.tool === 'erase') && (propsRef.current.tool === 'brush' || propsRef.current.tool === 'erase')) {
+        draft.tool = propsRef.current.tool === 'erase' || event.altKey ? 'erase' : 'brush';
+      }
       const samples = event.nativeEvent.getCoalescedEvents?.() ?? [];
       for (const sample of samples.length ? samples : [event.nativeEvent]) {
         const next = clampPoint(eventPoint(sample)); draft.end = next;
@@ -347,17 +362,17 @@ export function CanvasEditor(props: CanvasEditorProps) {
       onDoubleClick={e => { if (lassoRef.current) { e.preventDefault(); finishLasso(); } }} />
       : <div className="canvas-empty"><strong>画布等待照片</strong><span>导入照片或从项目入口选择一个项目</span></div>}
     {props.imageUrl && (props.tool === 'brush' || props.tool === 'erase') && <div className="canvas-tool-options" aria-label="笔刷选项">
-      <strong>{props.tool === 'erase' ? '橡皮' : '画笔'}</strong><label>直径 <input aria-label="笔刷直径" type="range" min="1" max="512" value={props.brushSize} onChange={e => props.onBrushSizeChange?.(Number(e.target.value))} /></label><span>{props.brushSize} px</span><small>[ ] 调整大小</small>
+      <strong>{props.tool === 'erase' ? '橡皮' : '画笔'}</strong><label>直径 <input aria-label="笔刷直径" type="range" min="1" max="512" value={props.brushSize} onChange={e => props.onBrushSizeChange?.(Number(e.target.value))} /></label><span>{props.brushSize} px</span><small>[ ] 调整大小{props.tool === 'brush' ? ' · Alt 临时橡皮' : ''}</small>
     </div>}
     {props.imageUrl && isLasso && <div className="canvas-tool-options lasso-options" aria-label="套索选项">
       <select aria-label="套索模式" value={props.tool} onChange={e => props.onToolChange?.(e.target.value as Tool)}><option value="magnetic">磁性套索</option><option value="lasso">自由套索</option><option value="polygon">多边形套索</option></select>
-      {props.tool === 'magnetic' && <><label>吸附范围 <input aria-label="磁性吸附范围" type="range" min="4" max="40" value={snapRadius} onChange={e => setSnapRadius(Number(e.target.value))} /></label><span>{snapRadius} px</span><label>边缘对比 <input aria-label="边缘对比" type="range" min="2" max="80" value={contrast} onChange={e => setContrast(Number(e.target.value))} /></label><span>{contrast}%</span></>}
+      {props.tool === 'magnetic' && <><label>吸附范围 <input aria-label="磁性吸附范围" type="range" min="4" max="32" value={snapRadius} onChange={e => setSnapRadius(Number(e.target.value))} /></label><span>{snapRadius} px</span><label>边缘强度 <input aria-label="边缘强度阈值" type="range" min="10" max="80" value={contrast} onChange={e => setContrast(Number(e.target.value))} /></label><span>{contrast}%</span><small>仅吸附强边缘 · Alt 自由跟随</small></>}
     </div>}
     {props.imageUrl && <div className="zoom-dock" aria-label="画布缩放">
       <button type="button" aria-label="缩小" onClick={() => applyZoom(geometry().scale / 1.2)}>−</button><button type="button" className="zoom-fit" onClick={() => applyZoom(null)}>适合</button>
       <span className="zoom-value">{zoomLabel === '适合' ? fitLabel : zoomLabel}</span>
       <button type="button" className="zoom-fit" onClick={() => applyZoom(1)}>100%</button><button type="button" aria-label="放大" onClick={() => applyZoom(geometry().scale * 1.2)}>＋</button>
     </div>}
-    {(edgeError || isLasso) && <div className="canvas-hint" role="status">{edgeError || (props.tool === 'lasso' ? '按住拖画，松开闭合 · Esc 取消' : lassoCount ? `已设 ${lassoCount} 个锚点 · 移动贴边 · 点击加点 · Backspace 回退 · Enter 闭合 · Alt 暂停吸附` : '点击起点后沿边缘移动 · Enter / 双击 / 回到起点闭合')}</div>}
+    {(edgeError || isLasso) && <div className="canvas-hint" role="status">{edgeError || (props.tool === 'lasso' ? '按住拖画，松开闭合 · 空格平移不丢路径 · Esc 取消' : props.tool === 'polygon' ? (lassoCount ? `已设 ${lassoCount} 个锚点 · 点击加点 · Backspace 回退 · Enter 闭合 · 空格平移` : '点击放置锚点 · Enter / 双击闭合 · 空格平移') : lassoCount ? `已设 ${lassoCount} 个锚点 · 近强边缘才吸附 · 点击锁定 · Alt 自由画 · Backspace 回退 · Enter 闭合 · 空格平移` : '点击起点 · 靠近清晰边缘才会吸附 · Alt 临时关闭吸附 · 空格平移')}</div>}
   </div>;
 }

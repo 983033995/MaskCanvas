@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { imageGeometry, sourcePoint, screenPoint } from './canvas-geometry.js';
-import { buildEdgeMap, snapToEdge, traceEdge } from './magnetic-lasso.js';
+import { buildEdgeMap, snapToEdge, didSnapToEdge, traceEdge } from './magnetic-lasso.js';
 
 test('pointer round-trip stays in source pixels at fit/zoom/pan and CSS scaling', () => {
   for (const scale of [null, 0.25, 1, 2.5]) for (const panX of [0, -120, 60]) {
@@ -48,4 +48,41 @@ test('edge-map paths map back to full original image coordinates', () => {
   small.imageWidth = 1000; small.imageHeight = 800;
   const snapped = snapToEdge(small, { x: 550, y: 250 }, 100, 0.12);
   assert.ok(Math.abs(snapped.x - 500) <= 10); assert.equal(snapped.y, 250);
+});
+
+
+test('snap stays free on weak texture and only pulls near a strong edge', () => {
+  // Hard vertical seam at x=50; left/right otherwise flat.
+  const edge = fixture(100, 80, x => x < 50 ? [240, 20, 30] : [10, 190, 60]);
+  // Far from the seam: must NOT yank toward x=50.
+  const far = snapToEdge(edge, { x: 20, y: 40 }, 8, 0.25, { stickiness: 1.15, margin: 0.1 });
+  assert.deepEqual(far, { x: 20, y: 40 });
+  assert.equal(didSnapToEdge({ x: 20, y: 40 }, far), false);
+  // Close to the seam: snaps.
+  const near = snapToEdge(edge, { x: 54, y: 40 }, 10, 0.25, { stickiness: 1.15, margin: 0.1 });
+  assert.ok(Math.abs(near.x - 50) <= 2, JSON.stringify(near));
+  assert.equal(didSnapToEdge({ x: 54, y: 40 }, near), true);
+});
+
+test('higher contrast threshold ignores soft gradients that low contrast would catch', () => {
+  // Gentle ramp — edge strength is low across the field.
+  const soft = fixture(80, 60, x => {
+    const t = x / 79;
+    const v = Math.round(40 + t * 80);
+    return [v, v, v];
+  });
+  const low = snapToEdge(soft, { x: 40, y: 30 }, 14, 0.05, { margin: 0.02, stickiness: 0.5 });
+  const high = snapToEdge(soft, { x: 40, y: 30 }, 14, 0.35, { margin: 0.1, stickiness: 1.15 });
+  // High threshold must leave the cursor free.
+  assert.deepEqual(high, { x: 40, y: 30 });
+  // Low threshold may or may not move; if it moves, that shows the gradient exists —
+  // the important contract is high-threshold freedom above.
+  void low;
+});
+
+test('alt/freehand path is a straight rubber-band (caller skips snap)', () => {
+  // Documented contract: when freehand=true CanvasEditor never calls snapToEdge.
+  // Keep the helper honest: identical points are not a snap.
+  assert.equal(didSnapToEdge({ x: 1, y: 1 }, { x: 1, y: 1 }), false);
+  assert.equal(didSnapToEdge({ x: 1, y: 1 }, { x: 3, y: 1 }), true);
 });

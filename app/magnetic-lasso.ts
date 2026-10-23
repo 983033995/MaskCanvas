@@ -8,6 +8,13 @@ export interface EdgeMap {
   strength: Float32Array;
 }
 
+export interface SnapOptions {
+  /** Extra stickiness weight on distance (0–2). Higher = prefer staying near cursor. Default 1. */
+  stickiness?: number;
+  /** Edge must beat free-cursor baseline by this margin (0–1). Default 0.08. */
+  margin?: number;
+}
+
 // RGB gradients also detect boundaries between different colours of similar
 // luminance. The map is computed once per image, not on every pointer event.
 export function buildEdgeMap(data: Uint8ClampedArray, width: number, height: number, imageWidth = width, imageHeight = height): EdgeMap {
@@ -27,21 +34,35 @@ export function buildEdgeMap(data: Uint8ClampedArray, width: number, height: num
 const inMap = (map: EdgeMap, p: Point) => ({ x: Math.max(0, Math.min(map.width - 1, Math.round(p.x * map.width / map.imageWidth))), y: Math.max(0, Math.min(map.height - 1, Math.round(p.y * map.height / map.imageHeight))) });
 const fromMap = (map: EdgeMap, p: Point) => ({ x: p.x * map.imageWidth / map.width, y: p.y * map.imageHeight / map.height });
 
-export function snapToEdge(map: EdgeMap, point: Point, radius: number, contrast: number): Point {
+/**
+ * Snap only when a *strong* edge lies near the cursor.
+ * Flat / weak areas return the free cursor point unchanged — no sticky pull.
+ */
+export function snapToEdge(map: EdgeMap, point: Point, radius: number, contrast: number, options: SnapOptions = {}): Point {
+  const stickiness = options.stickiness ?? 1;
+  const margin = options.margin ?? 0.08;
   const p = inMap(map, point);
-  const rx = Math.max(1, Math.min(64, Math.ceil(radius * map.width / map.imageWidth)));
-  const ry = Math.max(1, Math.min(64, Math.ceil(radius * map.height / map.imageHeight)));
-  let best = -Infinity, result: Point | undefined;
+  const rx = Math.max(1, Math.min(48, Math.ceil(radius * map.width / map.imageWidth)));
+  const ry = Math.max(1, Math.min(48, Math.ceil(radius * map.height / map.imageHeight)));
+  // Free cursor wins unless an edge clearly beats it.
+  let best = contrast + margin;
+  let result: Point | undefined;
   for (let y = Math.max(1, p.y - ry); y <= Math.min(map.height - 2, p.y + ry); y++) {
     for (let x = Math.max(1, p.x - rx); x <= Math.min(map.width - 2, p.x + rx); x++) {
       const distance = Math.hypot((x - p.x) / rx, (y - p.y) / ry);
       const edge = map.strength[y * map.width + x];
       if (distance > 1 || edge < contrast) continue;
-      const score = edge * 2 - distance * 0.8;
+      // Prefer nearby strong edges; distance is penalised harder than before.
+      const score = edge - distance * (0.55 * stickiness);
       if (score > best) { best = score; result = { x, y }; }
     }
   }
   return result ? fromMap(map, result) : point;
+}
+
+/** True when snap moved the point onto an edge (not free-follow). */
+export function didSnapToEdge(raw: Point, snapped: Point, epsilon = 0.5): boolean {
+  return Math.hypot(snapped.x - raw.x, snapped.y - raw.y) > epsilon;
 }
 
 class MinHeap {
@@ -71,7 +92,8 @@ class MinHeap {
 // around the user's movement prevents unrelated distant edges stealing the path.
 export function traceEdge(map: EdgeMap, start: Point, end: Point, radius: number, contrast: number): Point[] {
   const a = inMap(map, start), b = inMap(map, end);
-  const margin = Math.max(3, Math.min(48, Math.ceil(radius * map.width / map.imageWidth)));
+  // Tighter corridor than before — less “teleport” to distant edges.
+  const margin = Math.max(2, Math.min(28, Math.ceil(radius * map.width / map.imageWidth)));
   const left = Math.max(0, Math.min(a.x, b.x) - margin), top = Math.max(0, Math.min(a.y, b.y) - margin);
   const right = Math.min(map.width - 1, Math.max(a.x, b.x) + margin), bottom = Math.min(map.height - 1, Math.max(a.y, b.y) + margin);
   const w = right - left + 1, h = bottom - top + 1;
@@ -100,7 +122,8 @@ export function traceEdge(map: EdgeMap, start: Point, end: Point, radius: number
       const strength = map.strength[ny * map.width + nx];
       const edge = strength >= contrast ? strength : 0;
       const deviation = Math.abs(dy * (nx - a.x) - dx * (ny - a.y)) / length;
-      const cost = Math.hypot(sx, sy) * (1 + 24 * (1 - edge) ** 2 + 0.08 * deviation);
+      // Weaker edges cost more; straight free path stays competitive off-edge.
+      const cost = Math.hypot(sx, sy) * (1 + 18 * (1 - edge) ** 2 + 0.12 * deviation);
       const nextDistance = distance[id] + cost;
       if (nextDistance >= distance[next]) continue;
       distance[next] = nextDistance; previous[next] = id;
