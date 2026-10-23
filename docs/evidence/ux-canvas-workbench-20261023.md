@@ -111,3 +111,25 @@ Goals: production-feeling annotate workbench without waiting for per-tweak direc
 - Real SAM2 / ONNX weights
 - Full multi-level undo stack beyond per-region shape undo + lasso Backspace
 - Autonomous agent segment mode
+
+
+## Pass: undo/redo + multi-prompt suggest (SAM deferred)
+
+### SAM2 decision
+Full SAM2 / MobileSAM ONNX **not** shipped this pass. Reasons and next-step plan: [`docs/sam2-deferred.md`](../sam2-deferred.md).
+
+### Instead (workable click-to-mask UX)
+- Multi-point **positive** clicks + **Alt+click negative** excludes (`suggestRegionFromPrompts`)
+- Drag-box still supported; markers drawn on canvas; replace-last shape while refining
+- Local edge+colour engine with soft-close and negative carve
+
+### Undo / redo
+- `AnnotateHistory` stack (max 60) for regions + selection
+- `⌘/Ctrl+Z` undo, `⇧⌘/Ctrl+Z` redo; rail buttons
+- Records structural edits (shapes/kind/feather/context/add/delete/morph/suggest); not every intent keystroke
+- Remote/project load resets stack via `replacePresent`
+
+### Checks
+- `npm test` 88 pass
+- `npm run build` OK
+- Preview restarted: `MASKCANVAS_BIND=0.0.0.0` `MASKCANVAS_ALLOW_REMOTE_BROWSER=1` on `:7317`

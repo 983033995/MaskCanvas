@@ -3,7 +3,7 @@ import type { Point, Region, Shape } from '../packages/shared/types';
 import { imageGeometry, sourcePoint, screenPoint, type View } from './canvas-geometry';
 import { renderMasks, drawContextRect, EDIT_COLOR } from './canvas-render';
 import { buildEdgeMap, snapToEdge, didSnapToEdge, traceEdge, type EdgeMap } from './magnetic-lasso';
-import { suggestRegionFromImageData, suggestBoxFromImageData } from './region-suggest';
+import { suggestRegionFromImageData, suggestBoxFromImageData, suggestPromptsFromImageData, type PromptPoint } from './region-suggest';
 
 export type Tool = 'select' | 'brush' | 'erase' | 'rect' | 'polygon' | 'magnetic' | 'lasso' | 'move' | 'suggest';
 export type AnnotationKind = 'edit' | 'keep';
@@ -11,7 +11,7 @@ interface CanvasEditorProps {
   imageUrl: string; width: number; height: number; regions: Region[];
   activeRegionId: string | null; annotationKind: AnnotationKind; tool: Tool;
   brushSize: number; showMasks: boolean;
-  onShape: (regionId: string | null, kind: AnnotationKind, shape: Shape) => void;
+  onShape: (regionId: string | null, kind: AnnotationKind, shape: Shape, options?: { replaceLast?: boolean }) => void;
   onRegionSelect?: (id: string) => void;
   onToolChange?: (tool: Tool) => void;
   onBrushSizeChange?: (size: number) => void;
@@ -98,6 +98,9 @@ export function CanvasEditor(props: CanvasEditorProps) {
   // Higher strength = more magnetic pull (lower stickiness / margin). Default mild.
   const [snapStrength, setSnapStrength] = useState(32);
   const [suggestStatus, setSuggestStatus] = useState('');
+  const [suggestPrompts, setSuggestPrompts] = useState<PromptPoint[]>([]);
+  const suggestPromptsRef = useRef<PromptPoint[]>([]);
+  suggestPromptsRef.current = suggestPrompts;
   const optionsRef = useRef({ snapRadius, contrast, snapStrength }); optionsRef.current = { snapRadius, contrast, snapStrength };
   const snapOpts = () => {
     const strength = optionsRef.current.snapStrength / 100;
@@ -153,6 +156,26 @@ export function CanvasEditor(props: CanvasEditorProps) {
         ctx.strokeStyle = '#c9973f'; ctx.lineWidth = 1 / g.scale; ctx.strokeRect(x, y, w, h);
         ctx.setLineDash([]); ctx.restore();
       }
+
+      for (const prompt of suggestPromptsRef.current) {
+        const sp = screenPoint(prompt, g);
+        ctx.save();
+        ctx.beginPath(); ctx.arc(sp.x, sp.y, 6, 0, Math.PI * 2);
+        ctx.fillStyle = prompt.label === 1 ? '#3d8f5a' : '#b85a4a';
+        ctx.fill();
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.beginPath();
+        if (prompt.label === 1) {
+          ctx.moveTo(sp.x - 3, sp.y); ctx.lineTo(sp.x + 3, sp.y);
+          ctx.moveTo(sp.x, sp.y - 3); ctx.lineTo(sp.x, sp.y + 3);
+        } else {
+          ctx.moveTo(sp.x - 3, sp.y - 3); ctx.lineTo(sp.x + 3, sp.y + 3);
+          ctx.moveTo(sp.x + 3, sp.y - 3); ctx.lineTo(sp.x - 3, sp.y + 3);
+        }
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.restore();
+      }
+
       const lasso = lassoRef.current;
       const rawLine = lasso ? [...lasso.points, ...lasso.preview.slice(1)] : draft?.tool === 'lasso' ? draft.points : [];
       // Decimate dense live-wire previews so the rubber-band stays smooth while dragging.
@@ -213,9 +236,9 @@ export function CanvasEditor(props: CanvasEditorProps) {
     return () => { live = false; image.onload = null; image.onerror = null; };
   }, [props.imageUrl, scheduleDraw]);
 
-  useEffect(() => { scheduleDraw(); }, [props.regions, props.activeRegionId, props.showMasks, props.tool, props.brushSize, snapRadius, contrast, snapStrength, scheduleDraw]);
+  useEffect(() => { scheduleDraw(); }, [props.regions, props.activeRegionId, props.showMasks, props.tool, props.brushSize, snapRadius, contrast, snapStrength, suggestPrompts, scheduleDraw]);
   useEffect(() => {
-    draftRef.current = null; suggestBoxRef.current = null; lassoRef.current = null; dragRef.current = null; setLassoCount(0); setSuggestStatus(''); scheduleDraw();
+    draftRef.current = null; suggestBoxRef.current = null; lassoRef.current = null; dragRef.current = null; setLassoCount(0); setSuggestStatus(''); setSuggestPrompts([]); scheduleDraw();
   }, [props.tool, props.activeRegionId, props.imageUrl, scheduleDraw]);
   useEffect(() => () => { if (rafRef.current !== null) cancelAnimationFrame(rafRef.current); rafRef.current = null; }, []);
 
@@ -309,7 +332,7 @@ export function CanvasEditor(props: CanvasEditorProps) {
   }, [props.imageUrl, applyZoom, geometry]);
 
 
-  const runSuggest = (seed: Point, box?: { x: number; y: number; width: number; height: number }) => {
+  const runSuggest = (seed: Point, box?: { x: number; y: number; width: number; height: number }, promptsOverride?: PromptPoint[]) => {
     const p = propsRef.current;
     const image = imageRef.current;
     if (!image) { setSuggestStatus('照片尚未载入。'); return; }
@@ -325,18 +348,27 @@ export function CanvasEditor(props: CanvasEditorProps) {
       const strength = optionsRef.current.snapStrength / 100;
       const opts = {
         edgeBarrier: 0.16 + (1 - strength) * 0.14,
-        colourTolerance: box ? 54 : 40,
-        maxFraction: box ? 1 : 0.38,
+        colourTolerance: box ? 54 : 42,
+        maxFraction: box ? 1 : 0.4,
         closeRadius: 1,
+        negativeRadius: Math.max(6, Math.round(10 / Math.max(0.001, geometry().scale))),
       };
-      const result = box && Math.abs(box.width) >= 6 && Math.abs(box.height) >= 6
-        ? suggestBoxFromImageData(imageData, box, p.width, p.height, opts)
-        : suggestRegionFromImageData(imageData, seed, p.width, p.height, opts);
-      if (!result) { setSuggestStatus('未找到可用区域，试着点在更均匀的色块内，或拖出更大框。'); return; }
-      p.onShape(p.activeRegionId, p.annotationKind, result.shape);
+      const prompts = promptsOverride ?? suggestPromptsRef.current;
+      let result = null as ReturnType<typeof suggestPromptsFromImageData>;
+      if (prompts.length >= 1 && !(box && Math.abs(box.width) >= 6 && Math.abs(box.height) >= 6)) {
+        result = suggestPromptsFromImageData(imageData, prompts, p.width, p.height, opts);
+      } else if (box && Math.abs(box.width) >= 6 && Math.abs(box.height) >= 6) {
+        result = suggestBoxFromImageData(imageData, box, p.width, p.height, opts);
+      } else {
+        result = suggestRegionFromImageData(imageData, seed, p.width, p.height, opts);
+      }
+      if (!result) { setSuggestStatus('未找到可用区域。加点（含）或 Alt+点（排除）后再试。'); return; }
+      const replaceLast = prompts.length > 1 || Boolean(box);
+      p.onShape(p.activeRegionId, p.annotationKind, result.shape, { replaceLast });
+      const pos = prompts.filter((pt: PromptPoint) => pt.label === 1).length;
+      const neg = prompts.filter((pt: PromptPoint) => pt.label === 0).length;
       const bounds = [result.boundedByEdge && '边缘', result.boundedByColour && '色彩', result.boundedBySize && '面积', result.boundedByBox && '框选'].filter(Boolean).join(' · ');
-      setSuggestStatus(`已建议 ${result.pixels.toLocaleString()} px${bounds ? `（止于${bounds}）` : ''} · 画笔/扩张收缩继续修`);
-      setTimeout(() => setSuggestStatus(''), 4800);
+      setSuggestStatus(`已建议 ${result.pixels.toLocaleString()} px · 含${pos}/除${neg}${bounds ? ` · 止于${bounds}` : ''} · 继续点击精修`);
     } catch {
       setSuggestStatus('建议失败，可改用套索或画笔。');
     }
@@ -356,9 +388,17 @@ export function CanvasEditor(props: CanvasEditorProps) {
       const hit = [...p.regions].reverse().find(r => containsRegion(r, point)); if (hit) p.onRegionSelect?.(hit.id); return;
     }
     if (p.tool === 'suggest') {
+      // Alt+click = negative exclude; plain click starts possible drag-box / positive.
+      if (event.altKey) {
+        const prompts = [...suggestPromptsRef.current, { x: point.x, y: point.y, label: 0 as const }];
+        setSuggestPrompts(prompts);
+        runSuggest(point, undefined, prompts);
+        scheduleDraw();
+        return;
+      }
       suggestBoxRef.current = { start: point, end: point };
       event.currentTarget.setPointerCapture(event.pointerId);
-      setSuggestStatus('拖出范围可框选建议；轻点则从落点扩散');
+      setSuggestStatus('拖框约束 · 松手生成 · Alt+点击排除 · 继续点击追加包含点');
       scheduleDraw();
       return;
     }
@@ -416,8 +456,14 @@ export function CanvasEditor(props: CanvasEditorProps) {
       suggestBoxRef.current = null;
       const x = Math.min(box.start.x, box.end.x), y = Math.min(box.start.y, box.end.y);
       const w = Math.abs(box.end.x - box.start.x), h = Math.abs(box.end.y - box.start.y);
-      if (w >= 6 && h >= 6) runSuggest({ x: x + w / 2, y: y + h / 2 }, { x, y, width: w, height: h });
-      else runSuggest(box.start);
+      if (w >= 6 && h >= 6) {
+        setSuggestPrompts([]);
+        runSuggest({ x: x + w / 2, y: y + h / 2 }, { x, y, width: w, height: h }, []);
+      } else {
+        const prompts = [...suggestPromptsRef.current, { x: box.start.x, y: box.start.y, label: 1 as const }];
+        setSuggestPrompts(prompts);
+        runSuggest(box.start, undefined, prompts);
+      }
       if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
       scheduleDraw(); return;
     }
@@ -432,7 +478,7 @@ export function CanvasEditor(props: CanvasEditorProps) {
   const onKeyDown = (event: React.KeyboardEvent<HTMLCanvasElement>) => {
     if (event.key === ' ') { event.preventDefault(); spaceRef.current = true; }
     if (event.key === 'Enter' && lassoRef.current) { event.preventDefault(); finishLasso(); }
-    if (event.key === 'Escape') { event.preventDefault(); cancel(); setSuggestStatus(''); }
+    if (event.key === 'Escape') { event.preventDefault(); cancel(); setSuggestStatus(''); setSuggestPrompts([]); }
     if (event.key === '0' && !event.metaKey && !event.ctrlKey) { event.preventDefault(); applyZoom(null); }
     if (event.key === '1' && !event.metaKey && !event.ctrlKey) { event.preventDefault(); applyZoom(1); }
     if ((event.key === '=' || event.key === '+') && !event.metaKey && !event.ctrlKey) { event.preventDefault(); applyZoom(geometry().scale * 1.2); }
@@ -471,7 +517,7 @@ export function CanvasEditor(props: CanvasEditorProps) {
       <span className="zoom-value">{zoomLabel === '适合' ? fitLabel : zoomLabel}</span>
       <button type="button" className={zoomLabel === '100%' ? 'zoom-fit is-current' : 'zoom-fit'} onClick={() => applyZoom(1)}>100%</button><button type="button" aria-label="放大" onClick={() => applyZoom(geometry().scale * 1.2)}>＋</button>
     </div>}
-    {props.imageUrl && isSuggest && <div className="canvas-tool-options" aria-label="点选建议"><strong>点选 / 框选建议</strong><small>轻点扩散 · 拖框约束范围 · 非 SAM，可再精修</small></div>}
+    {props.imageUrl && isSuggest && <div className="canvas-tool-options" aria-label="点选建议"><strong>多点建议</strong><span>含 {suggestPrompts.filter((p: PromptPoint) => p.label === 1).length} · 除 {suggestPrompts.filter((p: PromptPoint) => p.label === 0).length}</span><button type="button" className="text-button" onClick={() => { setSuggestPrompts([]); setSuggestStatus('已清除提示点'); }}>清除点</button><small>点击=包含 · Alt+点击=排除 · 拖框=范围 · 非 SAM2</small></div>}
     {(edgeError || suggestStatus || isLasso || isSuggest) && <div className="canvas-hint" role="status">{edgeError || suggestStatus || (isSuggest ? '点击或拖框生成建议选区 · 画笔/形态学精修 · Esc 取消' : props.tool === 'lasso' ? '按住拖画，松开闭合 · 空格平移 · Esc 取消' : props.tool === 'polygon' ? (lassoCount ? `已设 ${lassoCount} 个锚点 · 点击加点 · Backspace 回退 · Enter/双击闭合 · 空格平移` : '点击放置锚点 · Enter / 双击闭合 · 空格平移') : lassoCount ? `已设 ${lassoCount} 个锚点 · 近强边缘才吸附 · 点击锁定 · Alt 自由 · Backspace 回退 · Enter/双击闭合 · 空格平移` : '点击起点 · 靠近清晰边缘才会吸附 · Alt 关闭吸附 · Enter/双击闭合')}</div>}
   </div>;
 }

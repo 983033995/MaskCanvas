@@ -15,6 +15,12 @@ export interface SuggestOptions {
   clipBox?: { x: number; y: number; width: number; height: number };
   /** Soft closing iterations after fill (dilate then erode). Default 1. */
   closeRadius?: number;
+  /** Extra positive click seeds (SAM-like include). */
+  positives?: Point[];
+  /** Negative clicks carve / block expansion (SAM-like exclude). */
+  negatives?: Point[];
+  /** Negative exclusion radius in pixels. Default 8. */
+  negativeRadius?: number;
 }
 
 export interface SuggestResult {
@@ -237,5 +243,150 @@ export function suggestBoxFromImageData(
       type: 'polygon',
       points: result.shape.points.map(p => ({ x: p.x * outX, y: p.y * outY })),
     },
+  };
+}
+
+
+export interface PromptPoint extends Point { label: 1 | 0 } // 1 = positive, 0 = negative
+
+/**
+ * Multi-prompt suggest (SAM-like UX without SAM weights):
+ * union floods from all positive seeds, then carve negative discs + block walls.
+ */
+export function suggestRegionFromPrompts(
+  rgba: Uint8ClampedArray,
+  width: number,
+  height: number,
+  prompts: PromptPoint[],
+  options: SuggestOptions = {},
+): SuggestResult | null {
+  const positives = prompts.filter(p => p.label === 1);
+  const negatives = prompts.filter(p => p.label === 0);
+  if (!positives.length) return null;
+
+  // Seed colour = median of positive samples.
+  const colours = positives.map(p => sampleRgb(
+    rgba, width,
+    Math.max(0, Math.min(width - 1, Math.round(p.x))),
+    Math.max(0, Math.min(height - 1, Math.round(p.y))),
+  ));
+  const seedColour: [number, number, number] = [
+    Math.round(colours.reduce((s, c) => s + c[0], 0) / colours.length),
+    Math.round(colours.reduce((s, c) => s + c[1], 0) / colours.length),
+    Math.round(colours.reduce((s, c) => s + c[2], 0) / colours.length),
+  ];
+
+  const edgeBarrier = options.edgeBarrier ?? 0.2;
+  const colourTolerance = options.colourTolerance ?? 42;
+  const maxFraction = options.maxFraction ?? 0.4;
+  const seedRadius = Math.max(0, Math.round(options.seedRadius ?? 2));
+  const closeRadius = Math.max(0, Math.round(options.closeRadius ?? 1));
+  const negativeRadius = Math.max(1, Math.round(options.negativeRadius ?? 8));
+  const maxPixels = Math.max(16, Math.floor(width * height * maxFraction));
+  const map = buildEdgeMap(rgba, width, height);
+
+  const blocked = createMask(width, height, 0);
+  for (const n of negatives) {
+    const nx = Math.round(n.x), ny = Math.round(n.y);
+    const r2 = negativeRadius * negativeRadius;
+    for (let y = Math.max(0, ny - negativeRadius); y <= Math.min(height - 1, ny + negativeRadius); y++) {
+      for (let x = Math.max(0, nx - negativeRadius); x <= Math.min(width - 1, nx + negativeRadius); x++) {
+        if ((x - nx) * (x - nx) + (y - ny) * (y - ny) <= r2) blocked[y * width + x] = 255;
+      }
+    }
+  }
+
+  const mask = createMask(width, height, 0);
+  const queue: number[] = [];
+  let boundedByEdge = false, boundedByColour = false, boundedBySize = false;
+
+  const trySeed = (x: number, y: number) => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return;
+    if (!inBox(x, y, options.clipBox)) return;
+    const id = y * width + x;
+    if (mask[id] || blocked[id]) return;
+    mask[id] = 255;
+    queue.push(id);
+  };
+
+  for (const p of positives) {
+    const sx = Math.max(0, Math.min(width - 1, Math.round(p.x)));
+    const sy = Math.max(0, Math.min(height - 1, Math.round(p.y)));
+    for (let dy = -seedRadius; dy <= seedRadius; dy++) for (let dx = -seedRadius; dx <= seedRadius; dx++) {
+      if (dx * dx + dy * dy <= seedRadius * seedRadius) trySeed(sx + dx, sy + dy);
+    }
+    trySeed(sx, sy);
+  }
+  if (!queue.length) return null;
+
+  let head = 0;
+  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const;
+  while (head < queue.length) {
+    if (queue.length > maxPixels) { boundedBySize = true; break; }
+    const id = queue[head++];
+    const x = id % width, y = Math.floor(id / width);
+    for (const [dx, dy] of dirs) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+      if (!inBox(nx, ny, options.clipBox)) continue;
+      const nid = ny * width + nx;
+      if (mask[nid] || blocked[nid]) continue;
+      const barrier = (dx && dy) ? edgeBarrier * 0.92 : edgeBarrier;
+      if (map.strength[nid] >= barrier) { boundedByEdge = true; continue; }
+      if (colourDistance(seedColour, sampleRgb(rgba, width, nx, ny)) > colourTolerance) { boundedByColour = true; continue; }
+      mask[nid] = 255;
+      queue.push(nid);
+    }
+  }
+
+  let cleaned = mask;
+  if (closeRadius > 0) cleaned = erodeMask(dilateMask(mask, width, height, closeRadius), width, height, closeRadius);
+  // Re-carve negatives after close so soft-close cannot bleed into excludes.
+  for (let i = 0; i < cleaned.length; i++) if (blocked[i]) cleaned[i] = 0;
+  for (const p of positives) {
+    const sx = Math.max(0, Math.min(width - 1, Math.round(p.x)));
+    const sy = Math.max(0, Math.min(height - 1, Math.round(p.y)));
+    if (!blocked[sy * width + sx]) cleaned[sy * width + sx] = 255;
+  }
+
+  const pixels = countMaskPixels(cleaned);
+  if (pixels < 4) return null;
+  const polygon = maskToPolygon(cleaned, width, height);
+  if (!polygon || polygon.length < 3) return null;
+  return {
+    shape: { type: 'polygon', points: polygon },
+    pixels,
+    boundedByEdge,
+    boundedByColour,
+    boundedBySize,
+    boundedByBox: Boolean(options.clipBox),
+  };
+}
+
+export function suggestPromptsFromImageData(
+  imageData: ImageData,
+  promptsOriginal: PromptPoint[],
+  imageWidth: number,
+  imageHeight: number,
+  options?: SuggestOptions,
+): SuggestResult | null {
+  const { width, height, data } = imageData;
+  const scaleX = width / imageWidth, scaleY = height / imageHeight;
+  const prompts = promptsOriginal.map(p => ({ x: p.x * scaleX, y: p.y * scaleY, label: p.label }));
+  const mapped: SuggestOptions = { ...options };
+  if (options?.clipBox) {
+    mapped.clipBox = {
+      x: options.clipBox.x * scaleX,
+      y: options.clipBox.y * scaleY,
+      width: options.clipBox.width * scaleX,
+      height: options.clipBox.height * scaleY,
+    };
+  }
+  const result = suggestRegionFromPrompts(data, width, height, prompts, mapped);
+  if (!result || result.shape.type !== 'polygon') return result;
+  const outX = imageWidth / width, outY = imageHeight / height;
+  return {
+    ...result,
+    shape: { type: 'polygon', points: result.shape.points.map(p => ({ x: p.x * outX, y: p.y * outY })) },
   };
 }

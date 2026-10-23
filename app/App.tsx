@@ -43,6 +43,7 @@ import { ProposalReview, type ProposalDraftFields } from './ProposalReview';
 import { RegionContextControl } from './RegionContextControl';
 import { ReviewCompare } from './ReviewCompare';
 import { morphRegionShapes, type MorphOp } from './mask-morphology';
+import { AnnotateHistory, type AnnotateSnapshot } from './annotate-history';
 import type { ReviewCompareMode } from './canvas-diff';
 import './styles.css';
 
@@ -238,6 +239,9 @@ export default function App() {
   const packageInputRef = useRef<HTMLInputElement>(null);
   const candidateInputRef = useRef<HTMLInputElement>(null);
   const savedRegionsRef = useRef('[]');
+  const annotateHistoryRef = useRef<AnnotateHistory | null>(null);
+  const skipHistoryRef = useRef(false);
+  const [historyTick, setHistoryTick] = useState(0);
   const savedProposalDraftRef = useRef('');
   const proposalDirtyRef = useRef(false);
   const draftDirtyRef = useRef(false);
@@ -390,7 +394,7 @@ export default function App() {
     const projectChanged = currentProjectIdRef.current !== project.id;
     currentProjectIdRef.current = project.id;
     setCurrentProject(project);
-    setRegions(project.regions);
+    setRegions(project.regions); resetHistory(project.regions, project.regions[0]?.id ?? null);
     savedRegionsRef.current = JSON.stringify(project.regions);
     setProposals([]);
     if (projectChanged) setProjectPermissions(null);
@@ -425,7 +429,7 @@ export default function App() {
     const fields = proposalPayload(proposal);
     setActiveProposal(proposal);
     setProposalDraft(fields);
-    setRegions(proposal.regions);
+    setRegions(proposal.regions); resetHistory(proposal.regions, proposal.regions[0]?.id ?? null);
     savedProposalDraftRef.current = proposalSnapshotFor(fields, proposal.regions);
     setSelectedRegionId(proposal.regions.find(region => region.kind === 'edit')?.id ?? proposal.regions[0]?.id ?? null);
     setAnnotationKind('edit');
@@ -655,7 +659,7 @@ export default function App() {
     try {
       const project = await api.saveRegions(currentProject.id, currentProject.revision, regions);
       setCurrentProject(project);
-      setRegions(project.regions);
+      setRegions(project.regions); resetHistory(project.regions, project.regions[0]?.id ?? null);
       savedRegionsRef.current = JSON.stringify(project.regions);
       setSelectedRegionId(id => project.regions.some(region => region.id === id) ? id : project.regions[0]?.id ?? null);
       notify('success', '标注已保存到项目。');
@@ -672,8 +676,14 @@ export default function App() {
     }
   };
 
-  const updateRegion = (id: string, update: Partial<Region>) => {
-    setRegions(current => current.map(region => region.id === id ? { ...region, ...update } : region));
+  const updateRegion = (id: string, update: Partial<Region>, options?: { recordHistory?: boolean }) => {
+    const nextRegions = regions.map(region => region.id === id ? { ...region, ...update } : region);
+    setRegions(nextRegions);
+    const keys = Object.keys(update);
+    const structural = keys.some(key => key === 'shapes' || key === 'kind' || key === 'feather' || key === 'context');
+    if (options?.recordHistory ?? structural) {
+      pushHistory(nextRegions, selectedRegionId);
+    }
     if (activeProposal && update.kind) {
       setProposalDraft(current => {
         if (!current) return current;
@@ -686,9 +696,12 @@ export default function App() {
   };
 
   const deleteRegion = (id: string) => {
-    setRegions(current => current.filter(region => region.id !== id));
+    const nextRegions = regions.filter(region => region.id !== id);
+    const nextSelected = selectedRegionId === id ? null : selectedRegionId;
+    setRegions(nextRegions);
     if (activeProposal) setProposalDraft(current => current ? { ...current, suggestions: current.suggestions.filter(item => item.regionId !== id) } : current);
     if (selectedRegionId === id) setSelectedRegionId(null);
+    pushHistory(nextRegions, nextSelected);
   };
 
   const addRegion = (kind: AnnotationKind) => {
@@ -700,19 +713,62 @@ export default function App() {
       feather: 0,
       shapes: [],
     };
-    setRegions(current => [...current, next]);
+    const nextRegions = [...regions, next];
+    setRegions(nextRegions);
     if (activeProposal && kind === 'edit') setProposalDraft(current => current ? { ...current, suggestions: [...current.suggestions, { regionId: next.id, reason: '用户新增编辑区域', enabled: true }] } : current);
     setSelectedRegionId(next.id);
     setAnnotationKind(kind);
     setTool('brush');
     setTab('annotate');
+    pushHistory(nextRegions, next.id);
   };
 
-  const addShape = (regionId: string | null, kind: AnnotationKind, shape: Shape) => {
+  const pushHistory = (nextRegions: Region[], nextSelected: string | null = selectedRegionId) => {
+    if (!annotateHistoryRef.current) annotateHistoryRef.current = new AnnotateHistory({ regions: nextRegions, selectedRegionId: nextSelected });
+    else annotateHistoryRef.current.push({ regions: nextRegions, selectedRegionId: nextSelected });
+    setHistoryTick(value => value + 1);
+  };
+
+  const resetHistory = (nextRegions: Region[], nextSelected: string | null) => {
+    if (!annotateHistoryRef.current) annotateHistoryRef.current = new AnnotateHistory({ regions: nextRegions, selectedRegionId: nextSelected });
+    else annotateHistoryRef.current.replacePresent({ regions: nextRegions, selectedRegionId: nextSelected });
+    setHistoryTick(value => value + 1);
+  };
+
+  const applyHistorySnapshot = (snapshot: AnnotateSnapshot) => {
+    skipHistoryRef.current = true;
+    setRegions(snapshot.regions);
+    setSelectedRegionId(snapshot.selectedRegionId);
+    const region = snapshot.regions.find(item => item.id === snapshot.selectedRegionId);
+    if (region) setAnnotationKind(region.kind);
+    setHistoryTick(value => value + 1);
+  };
+
+  const undoAnnotate = () => {
+    const snapshot = annotateHistoryRef.current?.undo();
+    if (!snapshot) { notify('info', '没有可撤销的标注步骤。'); return; }
+    applyHistorySnapshot(snapshot);
+  };
+
+  const redoAnnotate = () => {
+    const snapshot = annotateHistoryRef.current?.redo();
+    if (!snapshot) { notify('info', '没有可重做的标注步骤。'); return; }
+    applyHistorySnapshot(snapshot);
+  };
+
+  const addShape = (regionId: string | null, kind: AnnotationKind, shape: Shape, options?: { replaceLast?: boolean }) => {
     setShowMasks(true);
     if (regionId && regions.some(region => region.id === regionId)) {
-      setRegions(current => current.map(region => region.id === regionId ? { ...region, shapes: [...region.shapes, shape] } : region));
+      const nextRegions = regions.map(region => {
+        if (region.id !== regionId) return region;
+        if (options?.replaceLast && region.shapes.length) {
+          return { ...region, shapes: [...region.shapes.slice(0, -1), shape] };
+        }
+        return { ...region, shapes: [...region.shapes, shape] };
+      });
+      setRegions(nextRegions);
       setSelectedRegionId(regionId);
+      pushHistory(nextRegions, regionId);
       return;
     }
     const next: Region = {
@@ -723,15 +779,20 @@ export default function App() {
       feather: 0,
       shapes: [shape],
     };
-    setRegions(current => [...current, next]);
+    const nextRegions = [...regions, next];
+    setRegions(nextRegions);
     if (activeProposal && kind === 'edit') setProposalDraft(current => current ? { ...current, suggestions: [...current.suggestions, { regionId: next.id, reason: '用户新增编辑区域', enabled: true }] } : current);
     setSelectedRegionId(next.id);
     setAnnotationKind(kind);
+    pushHistory(nextRegions, next.id);
   };
 
   const undoShape = () => {
     if (!selectedRegion) return;
-    updateRegion(selectedRegion.id, { shapes: selectedRegion.shapes.slice(0, -1) });
+    const nextShapes = selectedRegion.shapes.slice(0, -1);
+    const nextRegions = regions.map(region => region.id === selectedRegion.id ? { ...region, shapes: nextShapes } : region);
+    setRegions(nextRegions);
+    pushHistory(nextRegions, selectedRegion.id);
   };
 
   const applyMorphology = (op: MorphOp) => {
@@ -771,7 +832,7 @@ export default function App() {
       });
       const created = project.versions.filter(version => version.status === 'candidate').at(-1);
       setCurrentProject(project);
-      setRegions(project.regions);
+      setRegions(project.regions); resetHistory(project.regions, project.regions[0]?.id ?? null);
       savedRegionsRef.current = JSON.stringify(project.regions);
       if (created) setSelectedVersionId(created.id);
       setIsComparing(false);
@@ -841,7 +902,7 @@ export default function App() {
       if (!project.versions.some(version => version.id === candidateJob.versionId)) throw new Error('计划任务报告了候选版本，但项目读取中尚未包含该资产。');
       surfacedPlanCandidatesRef.current.add(candidateJob.id);
       setCurrentProject(project);
-      setRegions(project.regions);
+      setRegions(project.regions); resetHistory(project.regions, project.regions[0]?.id ?? null);
       savedRegionsRef.current = JSON.stringify(project.regions);
       setSelectedRegionId(project.regions[0]?.id ?? null);
       setSelectedVersionId(candidateJob.versionId ?? null);
@@ -1071,7 +1132,7 @@ export default function App() {
         setActiveProposal(null);
         setProposalDraft(null);
         savedProposalDraftRef.current = '';
-        setRegions(currentProject.regions);
+        setRegions(currentProject.regions); resetHistory(currentProject.regions, currentProject.regions[0]?.id ?? selectedRegionId);
         savedRegionsRef.current = JSON.stringify(currentProject.regions);
         setSelectedRegionId(currentProject.regions[0]?.id ?? null);
       }
@@ -1109,7 +1170,7 @@ export default function App() {
       const freshProject = await api.getProject(projectId);
       if (currentProjectIdRef.current !== projectId) return;
       setCurrentProject(freshProject);
-      setRegions(freshProject.regions);
+      setRegions(freshProject.regions); resetHistory(freshProject.regions, freshProject.regions[0]?.id ?? null);
       savedRegionsRef.current = JSON.stringify(freshProject.regions);
       setSelectedRegionId(freshProject.regions[0]?.id ?? null);
       setSelectedProposalId(activeProposal.id);
@@ -1171,7 +1232,7 @@ export default function App() {
         return;
       }
       setCurrentProject(updatedProject);
-      setRegions(updatedProject.regions);
+      setRegions(updatedProject.regions); resetHistory(updatedProject.regions, updatedProject.regions[0]?.id ?? null);
       savedRegionsRef.current = JSON.stringify(updatedProject.regions);
       setSelectedRegionId(updatedProject.regions[0]?.id ?? null);
       setActiveProposal(null);
@@ -1219,7 +1280,7 @@ export default function App() {
       // Return the canvas to the formal, confirmed annotation snapshot before
       // showing jobs or refreshing a completed candidate.
       setCurrentProject(freshProject);
-      setRegions(freshProject.regions);
+      setRegions(freshProject.regions); resetHistory(freshProject.regions, freshProject.regions[0]?.id ?? null);
       savedRegionsRef.current = JSON.stringify(freshProject.regions);
       setSelectedRegionId(freshProject.regions[0]?.id ?? null);
       setActiveProposal(null);
@@ -1342,9 +1403,17 @@ export default function App() {
 
   useEffect(() => {
     const saveShortcut = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's' && page === 'editor') {
+      if (!(event.metaKey || event.ctrlKey) || page !== 'editor') return;
+      const key = event.key.toLowerCase();
+      if (key === 's') {
         event.preventDefault();
         if (dirty && busy !== 'save' && busy !== 'proposal-save') void saveCurrentChanges().catch(() => { /* Save handlers report the error and preserve the draft. */ });
+        return;
+      }
+      if (key === 'z' && !proposalReadOnly) {
+        event.preventDefault();
+        if (event.shiftKey) redoAnnotate();
+        else undoAnnotate();
       }
     };
     window.addEventListener('keydown', saveShortcut);
@@ -1401,7 +1470,7 @@ export default function App() {
 
   const discardAndLeave = () => {
     if (currentProject) {
-      setRegions(currentProject.regions);
+      setRegions(currentProject.regions); resetHistory(currentProject.regions, currentProject.regions[0]?.id ?? selectedRegionId);
       savedRegionsRef.current = JSON.stringify(currentProject.regions);
       setSelectedRegionId(currentProject.regions[0]?.id ?? null);
     }
@@ -1564,7 +1633,11 @@ export default function App() {
                   return <button type="button" key={item.id} className={tool === item.id || item.id === 'magnetic' && ['polygon', 'lasso'].includes(tool) ? 'rail-tool active' : 'rail-tool'} onClick={() => { setTool(item.id); if (['brush', 'erase', 'magnetic', 'suggest'].includes(item.id)) setShowMasks(true); }} title={`${item.label} (${item.shortcut})`} aria-label={`${item.label}工具，快捷键 ${item.shortcut}`} disabled={proposalReadOnly}><Icon size={20} /><span>{item.label}</span><small>{item.shortcut}</small></button>;
                 })}
               </div>
-              <div className="rail-bottom"><button type="button" className="rail-tool" disabled={proposalReadOnly || !selectedRegion?.shapes.length} onClick={undoShape} title="撤销当前区域的最后一个形状"><ArrowUUpLeft size={19} /><span>撤销</span></button></div>
+              <div className="rail-bottom">
+                <button type="button" className="rail-tool" disabled={proposalReadOnly || !annotateHistoryRef.current?.canUndo} onClick={undoAnnotate} title="撤销标注 (⌘Z)" aria-label="撤销标注"><ArrowUUpLeft size={19} /><span>撤销</span><small>⌘Z</small></button>
+                <button type="button" className="rail-tool" disabled={proposalReadOnly || !annotateHistoryRef.current?.canRedo} onClick={redoAnnotate} title="重做标注 (⇧⌘Z)" aria-label="重做标注"><ArrowUUpLeft size={19} style={{ transform: 'scaleX(-1)' }} /><span>重做</span><small>⇧⌘Z</small></button>
+                <span className="history-tick" hidden>{historyTick}</span>
+              </div>
             </aside>
 
             <main className="workspace">
@@ -1736,7 +1809,7 @@ export default function App() {
                             <span className="region-main"><strong>{region.name}</strong><small>{region.kind === 'edit' ? '编辑区域' : '保护区域'} · {region.shapes.length} 个形状</small></span>
                             {selectedRegionId === region.id && <Check size={16} />}
                           </button>
-                          {selectedRegionId === region.id && <button type="button" className="region-delete" aria-label={`删除${region.name}`} onClick={() => { setRegions(current => current.filter(item => item.id !== region.id)); setSelectedRegionId(null); }}><X size={14} /></button>}
+                          {selectedRegionId === region.id && <button type="button" className="region-delete" aria-label={`删除${region.name}`} onClick={() => deleteRegion(region.id)}><X size={14} /></button>}
                         </div>
                       ))}
                     </div>
@@ -1827,7 +1900,9 @@ export default function App() {
           <li><kbd>0</kbd> 适合 · <kbd>1</kbd> 100% · <kbd>+</kbd>/<kbd>-</kbd> 缩放</li>
           <li>套索：<kbd>Enter</kbd>/双击闭合 · <kbd>Backspace</kbd> 回退锚点 · <kbd>Alt</kbd> 自由跟随</li>
           <li>建议：点击扩散 · 拖框约束 · 再用画笔/扩张收缩精修</li>
+          <li><kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>Z</kbd> 撤销 · <kbd>⇧⌘Z</kbd> 重做</li>
           <li><kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>S</kbd> 保存 · <kbd>?</kbd> 开关本面板</li>
+          <li>建议：点击包含 · <kbd>Alt</kbd>+点击排除 · 拖框范围（本地多点，非 SAM2）</li>
         </ul>
       </aside>}
 

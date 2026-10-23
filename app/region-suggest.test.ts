@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { suggestRegionFromClick, suggestRegionFromBox } from './region-suggest.js';
+import { suggestRegionFromClick, suggestRegionFromBox, suggestRegionFromPrompts } from './region-suggest.js';
 
 function paint(width: number, height: number, fill: (x: number, y: number) => number[]) {
   const data = new Uint8ClampedArray(width * height * 4);
@@ -48,4 +48,21 @@ test('box suggest stays inside the drag rectangle', () => {
       assert.ok(p.y >= 10 && p.y <= 65, `point escaped box: ${JSON.stringify(p)}`);
     }
   }
+});
+
+
+test('multi-prompt positives union and negatives carve', () => {
+  const data = paint(80, 60, (x) => (x < 45 ? [210, 50, 40] : [40, 180, 60]));
+  const withNeg = suggestRegionFromPrompts(data, 80, 60, [
+    { x: 12, y: 30, label: 1 },
+    { x: 20, y: 20, label: 1 },
+    { x: 38, y: 30, label: 0 },
+  ], { edgeBarrier: 0.2, colourTolerance: 50, negativeRadius: 6 });
+  assert.ok(withNeg);
+  const onlyPos = suggestRegionFromPrompts(data, 80, 60, [
+    { x: 12, y: 30, label: 1 },
+    { x: 20, y: 20, label: 1 },
+  ], { edgeBarrier: 0.2, colourTolerance: 50 });
+  assert.ok(onlyPos);
+  assert.ok(withNeg!.pixels < onlyPos!.pixels, `neg should carve: ${withNeg!.pixels} vs ${onlyPos!.pixels}`);
 });
