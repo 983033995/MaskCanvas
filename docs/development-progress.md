@@ -144,3 +144,11 @@
 | 本机 `npm start` + `scripts/ux-verify.mjs` | 会话/建项/存区、形态学、吸附远近、差异热图、静态 bundle 均通过 |
 
 证据：[ux-canvas-workbench-20261023.md](evidence/ux-canvas-workbench-20261023.md)。未推送远程；未改 Qwen/GPT 作业语义与 E/K/C 硬保护合成规则。
+
+
+## 2026-10-23 · `ux/canvas-workbench` 续：点选建议与吸附强度
+
+- 磁性套索增加「吸附强度」滑条；默认仍偏自由，Alt 关闭吸附。
+- 新增工具「建议」(G)：本地边缘+色彩洪水填充生成多边形，供画笔/形态学精修；**未**引入 SAM 权重。
+- 快捷键：`M` 显隐蒙版；画布焦点下 `0`/`1`/`+`/`-` 缩放；编辑区外接矩形重叠提示。
+- 验证：84 项测试与生产构建通过；服务保持 `0.0.0.0:7317` + `MASKCANVAS_ALLOW_REMOTE_BROWSER=1`，Tailscale `http://100.82.229.104:7317/` 可继续测。证据续写于 [ux-canvas-workbench-20261023.md](evidence/ux-canvas-workbench-20261023.md)。

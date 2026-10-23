@@ -635,3 +635,9 @@ button:disabled { cursor: not-allowed !important; opacity: .48; }
   padding: 10px 14px; border-radius: 6px; background: rgb(44 46 41 / 84%); color: #f7f7f3; font-size: 12px;
 }
 .review-exit { z-index: 3; }
+
+.tool-suggest .stage-canvas { cursor: crosshair; }
+.overlap-hint { margin: 8px 0 0; color: #9a7749; font-size: 9px; line-height: 1.45; }
+.shortcut-inline { margin-left: 4px; color: #a2a39b; font-size: 9px; font-weight: 450; }
+.lasso-options { flex-wrap: wrap; max-width: min(520px, calc(100% - 24px)); }
+.lasso-options label { white-space: nowrap; }

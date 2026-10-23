@@ -21,6 +21,7 @@ import {
   LockKey,
   PaintBrush,
   Magnet,
+  MagicWand,
   Plus,
   Rectangle,
   ShieldCheck,
@@ -61,6 +62,34 @@ function formatDate(value: string): string {
 function formatDimensions(width: number, height: number): string {
   return `${width.toLocaleString()} × ${height.toLocaleString()}`;
 }
+
+function regionRoughBounds(region: Region) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const shape of region.shapes) {
+    if (shape.type === 'rect') {
+      x0 = Math.min(x0, shape.x); y0 = Math.min(y0, shape.y);
+      x1 = Math.max(x1, shape.x + shape.width); y1 = Math.max(y1, shape.y + shape.height);
+    } else for (const point of shape.points) {
+      const r = shape.type === 'brush' ? shape.radius : 0;
+      x0 = Math.min(x0, point.x - r); y0 = Math.min(y0, point.y - r);
+      x1 = Math.max(x1, point.x + r); y1 = Math.max(y1, point.y + r);
+    }
+  }
+  if (!Number.isFinite(x0)) return null;
+  return { x0, y0, x1, y1 };
+}
+
+function overlappingEditNames(regions: Region[]): string[] {
+  const edits = regions.filter(region => region.kind === 'edit' && region.shapes.length);
+  const hits: string[] = [];
+  for (let i = 0; i < edits.length; i++) for (let j = i + 1; j < edits.length; j++) {
+    const a = regionRoughBounds(edits[i]), b = regionRoughBounds(edits[j]);
+    if (!a || !b) continue;
+    if (a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0) hits.push(`${edits[i].name} ↔ ${edits[j].name}`);
+  }
+  return hits;
+}
+
 
 function safeFilename(value: string): string {
   return value.trim().replace(/[\\/:*?"<>|]+/g, '-').slice(0, 80) || 'MaskCanvas';
@@ -1305,6 +1334,7 @@ export default function App() {
     { id: 'erase' as Tool, label: '擦除', shortcut: 'E', icon: Eraser },
     { id: 'rect' as Tool, label: '矩形', shortcut: 'R', icon: Rectangle },
     { id: 'magnetic' as Tool, label: '套索', shortcut: 'L', icon: Magnet },
+    { id: 'suggest' as Tool, label: '建议', shortcut: 'G', icon: MagicWand },
     { id: 'move' as Tool, label: '移动', shortcut: 'H', icon: Hand },
   ];
 
@@ -1324,9 +1354,10 @@ export default function App() {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target as HTMLElement;
       if (target.matches('input, textarea, select, [contenteditable="true"]')) return;
-      const keys: Record<string, Tool> = { v: 'select', b: 'brush', e: 'erase', r: 'rect', l: 'magnetic', h: 'move' };
+      if (event.key.toLowerCase() === 'm' && page === 'editor') { setShowMasks(value => !value); return; }
+      const keys: Record<string, Tool> = { v: 'select', b: 'brush', e: 'erase', r: 'rect', l: 'magnetic', g: 'suggest', h: 'move' };
       const next = keys[event.key.toLowerCase()];
-      if (next && page === 'editor') setTool(next);
+      if (next && page === 'editor') { setTool(next); if (['brush', 'erase', 'magnetic', 'suggest'].includes(next)) setShowMasks(true); }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -1526,7 +1557,7 @@ export default function App() {
               <div className="rail-tools">
                 {currentToolButtons.map(item => {
                   const Icon = item.icon;
-                  return <button type="button" key={item.id} className={tool === item.id || item.id === 'magnetic' && ['polygon', 'lasso'].includes(tool) ? 'rail-tool active' : 'rail-tool'} onClick={() => { setTool(item.id); if (['brush', 'erase', 'magnetic'].includes(item.id)) setShowMasks(true); }} title={`${item.label} (${item.shortcut})`} aria-label={`${item.label}工具，快捷键 ${item.shortcut}`} disabled={proposalReadOnly}><Icon size={20} /><span>{item.label}</span><small>{item.shortcut}</small></button>;
+                  return <button type="button" key={item.id} className={tool === item.id || item.id === 'magnetic' && ['polygon', 'lasso'].includes(tool) ? 'rail-tool active' : 'rail-tool'} onClick={() => { setTool(item.id); if (['brush', 'erase', 'magnetic', 'suggest'].includes(item.id)) setShowMasks(true); }} title={`${item.label} (${item.shortcut})`} aria-label={`${item.label}工具，快捷键 ${item.shortcut}`} disabled={proposalReadOnly}><Icon size={20} /><span>{item.label}</span><small>{item.shortcut}</small></button>;
                 })}
               </div>
               <div className="rail-bottom"><button type="button" className="rail-tool" disabled={proposalReadOnly || !selectedRegion?.shapes.length} onClick={undoShape} title="撤销当前区域的最后一个形状"><ArrowUUpLeft size={19} /><span>撤销</span></button></div>
@@ -1706,6 +1737,7 @@ export default function App() {
                       ))}
                     </div>
                     <div className="region-add-row"><button type="button" onClick={() => addRegion('edit')}><Plus size={15} />新建编辑区</button><button type="button" onClick={() => addRegion('keep')}><LockKey size={14} />新建保护区</button></div>
+                    {overlappingEditNames(regions).length > 0 && <p className="overlap-hint" role="status">编辑区外接矩形有重叠：{overlappingEditNames(regions).slice(0, 3).join('；')}。多意图请分步执行，勿盲目合并提示词。</p>}
                   </div>
                   {selectedRegion ? (
                     <>
@@ -1729,7 +1761,7 @@ export default function App() {
                     </>
                   ) : <div className="empty-inline empty-region"><PaintBrush size={24} /><strong>还没有标注区域</strong><span>选中画笔、矩形或套索，直接在照片上绘制。</span><button type="button" className="text-button" onClick={() => addRegion(annotationKind)}>先创建一个{annotationKind === 'edit' ? '编辑' : '保护'}区域</button></div>}
                   <div className="panel-separator" />
-                  <div className="display-row"><span>显示标注蒙版</span><button type="button" className={`switch ${showMasks ? 'on' : ''}`} role="switch" aria-checked={showMasks} onClick={() => setShowMasks(value => !value)} aria-label="显示标注蒙版"> <span /></button></div>
+                  <div className="display-row"><span>显示标注蒙版 <small className="shortcut-inline">M</small></span><button type="button" className={`switch ${showMasks ? 'on' : ''}`} role="switch" aria-checked={showMasks} onClick={() => setShowMasks(value => !value)} aria-label="显示标注蒙版，快捷键 M"> <span /></button></div>
                   <div className="annotation-actions">
                     <button type="button" className="button button-dark full-button" onClick={() => void saveAnnotations().catch(() => { /* saveAnnotations reports the conflict or request error. */ })} disabled={!dirty || busy === 'save'}>{busy === 'save' ? '正在保存…' : '保存标注'}<span className="button-shortcut">⌘ S</span></button>
                     {dirty && <div className="dirty-explain"><Info size={15} />标注尚未保存；提交任务前会先保存并冻结修订。</div>}

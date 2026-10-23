@@ -73,3 +73,19 @@ Server: `npm start` → http://127.0.0.1:7317/
 ```
 
 Script: `npx tsx scripts/ux-verify.mjs` (expects the server already listening).
+
+
+## Continue pass (same day) — suggest + snap strength + annotate quick wins
+
+### Landed
+1. **吸附强度 slider** on magnetic lasso (0–100). Maps to `stickiness` / `margin` in `snapToEdge` (`app/CanvasEditor.tsx`, `app/magnetic-lasso.ts`). Low = freer cursor; high = stickier edge pull. Alt still disables snap.
+2. **点选建议 (G)** — lightweight local edge+colour flood-fill suggest → polygon refine flow. **Not SAM** (no ONNX/WASM deps). Module `app/region-suggest.ts`; tool on rail; refine with brush / expand-contract.
+3. **Annotate quick wins:** `M` toggle masks; canvas `0`/`1`/`+`/`-` zoom when focused; edit-region overlap hint in inspector.
+
+### Checks
+- `npm test` 84/84
+- `npm run build` OK
+- Server restarted with `MASKCANVAS_BIND=0.0.0.0` + `MASKCANVAS_ALLOW_REMOTE_BROWSER=1`; listens `0.0.0.0:7317`
+- Curl with `Host/Origin: http://100.82.229.104:7317` → UI 200, capabilities 200, new bundle 200
+
+Deferred still: full SAM2 model pack; agent autonomous segment.
