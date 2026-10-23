@@ -64,9 +64,17 @@ export function ReviewCompare(props: ReviewCompareProps) {
       ctx.strokeStyle = '#252622'; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(split, oy); ctx.lineTo(split, oy + dh); ctx.stroke();
       // handle
-      ctx.fillStyle = '#252622';
-      ctx.fillRect(split - 10, oy + dh / 2 - 18, 20, 36);
-      ctx.fillStyle = '#fff'; ctx.fillRect(split - 1, oy + dh / 2 - 10, 2, 20);
+      // Rounded wipe handle
+      const hx = split - 11, hy = oy + dh / 2 - 20;
+      ctx.fillStyle = 'rgb(37 38 34 / 92%)';
+      ctx.beginPath();
+      ctx.moveTo(hx + 4, hy); ctx.lineTo(hx + 18, hy); ctx.quadraticCurveTo(hx + 22, hy, hx + 22, hy + 4);
+      ctx.lineTo(hx + 22, hy + 36); ctx.quadraticCurveTo(hx + 22, hy + 40, hx + 18, hy + 40);
+      ctx.lineTo(hx + 4, hy + 40); ctx.quadraticCurveTo(hx, hy + 40, hx, hy + 36);
+      ctx.lineTo(hx, hy + 4); ctx.quadraticCurveTo(hx, hy, hx + 4, hy); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.fillRect(split - 1, oy + dh / 2 - 12, 2, 24);
+      ctx.fillRect(split - 4, oy + dh / 2 - 5, 8, 1.5);
+      ctx.fillRect(split - 4, oy + dh / 2 + 3, 8, 1.5);
     } else {
       // diff heatmap over candidate
       ctx.drawImage(cand, ox, oy, dw, dh);
@@ -168,11 +176,17 @@ export function ReviewCompare(props: ReviewCompareProps) {
       <canvas
         ref={canvasRef}
         className="review-canvas"
-        aria-label={props.mode === 'wipe' ? 'wipe 对比画布' : '差异热图画布'}
+        tabIndex={0}
+        aria-label={props.mode === 'wipe' ? 'wipe 对比画布，左右方向键微调' : '差异热图画布'}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onKeyDown={event => {
+          if (props.mode !== 'wipe') return;
+          if (event.key === 'ArrowLeft') { event.preventDefault(); setWipe(w => Math.max(0.02, w - 0.02)); }
+          if (event.key === 'ArrowRight') { event.preventDefault(); setWipe(w => Math.min(0.98, w + 0.02)); }
+        }}
       />
       <div className="review-overlay-labels" aria-hidden="true">
         <span className="review-label left">{props.baseLabel ?? '基准'}</span>

@@ -22,6 +22,7 @@ import {
   PaintBrush,
   Magnet,
   MagicWand,
+  Keyboard,
   Plus,
   Rectangle,
   ShieldCheck,
@@ -204,6 +205,7 @@ export default function App() {
   const [isComparing, setIsComparing] = useState(false);
   const [compareMode, setCompareMode] = useState<ReviewCompareMode>('side');
   const [morphRadius, setMorphRadius] = useState(4);
+  const [showCheatSheet, setShowCheatSheet] = useState(false);
   const [showMasks, setShowMasks] = useState(true);
   const [tool, setTool] = useState<Tool>('select');
   const [annotationKind, setAnnotationKind] = useState<AnnotationKind>('edit');
@@ -1355,6 +1357,7 @@ export default function App() {
       const target = event.target as HTMLElement;
       if (target.matches('input, textarea, select, [contenteditable="true"]')) return;
       if (event.key.toLowerCase() === 'm' && page === 'editor') { setShowMasks(value => !value); return; }
+      if ((event.key === '?' || (event.shiftKey && event.key === '/')) && page === 'editor') { event.preventDefault(); setShowCheatSheet(value => !value); return; }
       const keys: Record<string, Tool> = { v: 'select', b: 'brush', e: 'erase', r: 'rect', l: 'magnetic', g: 'suggest', h: 'move' };
       const next = keys[event.key.toLowerCase()];
       if (next && page === 'editor') { setTool(next); if (['brush', 'erase', 'magnetic', 'suggest'].includes(next)) setShowMasks(true); }
@@ -1545,6 +1548,7 @@ export default function App() {
               <button type="button" className={tab === 'jobs' ? 'editor-tab active' : 'editor-tab'} onClick={() => setTab('jobs')} disabled={Boolean(activeProposal)}>任务{(hasPendingJob || jobs.some(job => ['queued', 'running', 'reconciling'].includes(job.status))) && <span className="tab-live-dot" />}</button>
             </nav>
             <div className="save-state"><span className={`save-dot ${dirty ? 'is-dirty' : ''}`} />{saveStateLabel}</div>
+            <button type="button" className={`cheat-toggle ${showCheatSheet ? 'active' : ''}`} aria-expanded={showCheatSheet} aria-controls="cheat-sheet" title="快捷键 (?)" onClick={() => setShowCheatSheet(v => !v)}><Keyboard size={17} /><span>快捷键</span></button>
             {dirty && <button type="button" className="save-top-button" onClick={() => void saveCurrentChanges().catch(() => { /* Save handlers report the conflict or request error. */ })} disabled={busy === 'save' || busy === 'proposal-save'}>{activeProposal ? '保存建议修改' : '保存标注'}</button>}
             {!activeProposal && <div className="export-menu-wrap">
               <button type="button" className="button button-dark export-trigger" onClick={() => setMenuOpen(open => !open)}><span>导出</span><CaretDown size={15} /></button>
@@ -1759,7 +1763,7 @@ export default function App() {
                       {(tool === 'brush' || tool === 'erase') && <div className="slider-field brush-setting"><div className="slider-heading"><label htmlFor="brush-range">{tool === 'erase' ? '橡皮直径' : '画笔直径'}</label><span>{brushSize} px</span></div><input id="brush-range" type="range" min="1" max="512" value={brushSize} onChange={event => setBrushSize(Number(event.target.value))} /></div>}
                       {tab === 'retouch' ? <div className="local-preview-section"><h3>局部预览</h3><div className="local-preview-pair"><div><RegionPreview imageUrl={baseUrl} region={selectedRegion} width={currentProject.width} height={currentProject.height} /><span>原图</span></div><div><RegionPreview imageUrl={displayUrl} region={selectedRegion} width={currentProject.width} height={currentProject.height} /><span>{selectedVersion?.status === 'source' ? '当前版本' : selectedVersion?.status === 'candidate' ? '候选' : selectedVersion?.status === 'rejected' ? '已拒绝' : '已接受'}</span></div></div><button type="button" className="text-button" onClick={() => setTab('annotate')}>精细调整选区</button></div> : <div className="mask-legend"><div><span className="region-swatch edit" /> <span><strong>E · 编辑范围</strong><small>琥珀色区域允许修改；羽化只向内</small></span></div><div><span className="region-swatch keep"><LockKey size={12} /></span><span><strong>K · 保护范围</strong><small>蓝色斜纹区域优先保持不变</small></span></div><div><span className="region-swatch context" /> <span><strong>C · 参考范围</strong><small>虚线框仅供模型观察，不是编辑授权</small></span></div></div>}
                     </>
-                  ) : <div className="empty-inline empty-region"><PaintBrush size={24} /><strong>还没有标注区域</strong><span>选中画笔、矩形或套索，直接在照片上绘制。</span><button type="button" className="text-button" onClick={() => addRegion(annotationKind)}>先创建一个{annotationKind === 'edit' ? '编辑' : '保护'}区域</button></div>}
+                  ) : <div className="empty-inline empty-region"><PaintBrush size={24} /><strong>还没有标注区域</strong><span>用画笔 / 矩形 / 套索直接在照片上画，或按 G 点选建议后再精修。</span><div className="empty-actions"><button type="button" className="button button-outline" onClick={() => { addRegion(annotationKind); setTool('suggest'); }}>建议选区</button><button type="button" className="text-button" onClick={() => addRegion(annotationKind)}>空{annotationKind === 'edit' ? '编辑' : '保护'}区域</button></div></div>}
                   <div className="panel-separator" />
                   <div className="display-row"><span>显示标注蒙版 <small className="shortcut-inline">M</small></span><button type="button" className={`switch ${showMasks ? 'on' : ''}`} role="switch" aria-checked={showMasks} onClick={() => setShowMasks(value => !value)} aria-label="显示标注蒙版，快捷键 M"> <span /></button></div>
                   <div className="annotation-actions">
@@ -1786,8 +1790,11 @@ export default function App() {
                         </div>
                       </>
                     ) : <p>服务端未提供像素验收报告，不能据此宣称范围安全。</p>}
-                    <button type="button" className="button button-dark full-button" disabled={!selectedVersion.validation?.passed || busy === 'accept' || dirty || selectedCandidateStale} onClick={() => void acceptCandidate(selectedVersion)}><CheckCircle size={17} />{busy === 'accept' ? '正在接受…' : '接受此版本'}</button>
-                    <button type="button" className="button button-outline full-button" disabled={Boolean(busy) || dirty} onClick={() => void rejectCandidate(selectedVersion)}><X size={17} />{busy === 'reject' ? '正在拒绝…' : '拒绝此候选，保留历史'}</button>
+                    <div className="staging-actions" role="group" aria-label="候选处置">
+                      <button type="button" className="button button-dark full-button" disabled={!selectedVersion.validation?.passed || busy === 'accept' || dirty || selectedCandidateStale} onClick={() => void acceptCandidate(selectedVersion)}><CheckCircle size={17} />{busy === 'accept' ? '正在接受…' : '接受为新基准'}</button>
+                      <button type="button" className="button button-outline full-button" disabled={Boolean(busy) || dirty} onClick={() => void rejectCandidate(selectedVersion)}><X size={17} />{busy === 'reject' ? '正在拒绝…' : '拒绝并保留历史'}</button>
+                    </div>
+                    <p className="staging-help">接受会推进正式基准；拒绝只标记候选，不删图、不改标注。范围通过 ≠ 视觉通过。</p>
                     {dirty && <span className="helper-text">有未保存标注。接受会将候选绑定到旧修订；请先放弃本地改动或重新导入候选。</span>}
                     {!dirty && selectedCandidateStale && <span className="helper-text">候选对应旧标注修订，无法接受。请按当前标注重新导入候选。</span>}
                     {selectedVersion.validation && !selectedVersion.validation.passed && <span className="helper-text">检查未通过，不能接受此候选。</span>}
@@ -1810,6 +1817,19 @@ export default function App() {
           </div>
         </div>
       ) : null}
+
+      {showCheatSheet && page === 'editor' && <aside id="cheat-sheet" className="cheat-sheet" role="dialog" aria-label="快捷键一览">
+        <div className="cheat-sheet-head"><strong>画布快捷键</strong><button type="button" aria-label="关闭" onClick={() => setShowCheatSheet(false)}><X size={15} /></button></div>
+        <ul>
+          <li><kbd>V</kbd> 选择 · <kbd>B</kbd> 画笔 · <kbd>E</kbd> 擦除 · <kbd>R</kbd> 矩形</li>
+          <li><kbd>L</kbd> 套索 · <kbd>G</kbd> 建议 · <kbd>H</kbd>/<kbd>空格</kbd> 平移</li>
+          <li><kbd>M</kbd> 显隐蒙版 · <kbd>[</kbd><kbd>]</kbd>/滚轮 笔刷大小</li>
+          <li><kbd>0</kbd> 适合 · <kbd>1</kbd> 100% · <kbd>+</kbd>/<kbd>-</kbd> 缩放</li>
+          <li>套索：<kbd>Enter</kbd>/双击闭合 · <kbd>Backspace</kbd> 回退锚点 · <kbd>Alt</kbd> 自由跟随</li>
+          <li>建议：点击扩散 · 拖框约束 · 再用画笔/扩张收缩精修</li>
+          <li><kbd>⌘</kbd>/<kbd>Ctrl</kbd>+<kbd>S</kbd> 保存 · <kbd>?</kbd> 开关本面板</li>
+        </ul>
+      </aside>}
 
       {flash && <div className={`toast toast-${flash.kind}`} role={flash.kind === 'error' ? 'alert' : 'status'}><span className="toast-icon">{flash.kind === 'success' ? <CheckCircle size={19} /> : flash.kind === 'error' ? <WarningCircle size={19} /> : <Info size={19} />}</span><span>{flash.message}</span><button type="button" aria-label="关闭通知" onClick={() => setFlash(null)}><X size={16} /></button></div>}
 

@@ -89,3 +89,25 @@ Script: `npx tsx scripts/ux-verify.mjs` (expects the server already listening).
 - Curl with `Host/Origin: http://100.82.229.104:7317` → UI 200, capabilities 200, new bundle 200
 
 Deferred still: full SAM2 model pack; agent autonomous segment.
+
+
+## Autonomous full UX pass (2026-10-23 continued)
+
+Goals: production-feeling annotate workbench without waiting for per-tweak direction.
+
+### Landed
+1. **Magnetic / free / polygon lasso** — milder defaults (radius 9, contrast 32%, strength 32%); auto-anchor only when snapped & travel ≥ 64px; preview decimation for smooth rubber-band; Backspace / Enter / double-click close unchanged; mode select keeps free vs magnetic explicit.
+2. **Suggest G** — improved flood (8-connected, soft close, luminance-weighted colour); **click OR drag-box** constrain; refine path unchanged.
+3. **Annotate UX** — active-tool badge; rail active emphasis; brush **scroll-wheel size** (Ctrl+wheel zooms); `?` **keyboard cheat-sheet**; clearer empty state with “建议选区” CTA; M masks.
+4. **Review** — wipe handle polish + arrow-key nudge; staging copy “接受为新基准 / 拒绝并保留历史” + help line.
+5. **Perf** — feather overlay downsamples large photos (≤1024 long side) before alpha paint.
+
+### Checks
+- `npm test` 84 pass
+- `npm run build` OK
+- Server restart: `MASKCANVAS_BIND=0.0.0.0` `MASKCANVAS_ALLOW_REMOTE_BROWSER=1` → `0.0.0.0:7317`
+
+### Still out of scope
+- Real SAM2 / ONNX weights
+- Full multi-level undo stack beyond per-region shape undo + lasso Backspace
+- Autonomous agent segment mode
