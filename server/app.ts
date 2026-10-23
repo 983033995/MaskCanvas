@@ -248,14 +248,14 @@ function requireLocalApiRequest() {
     response.setHeader('Cache-Control', 'no-store');
     response.setHeader('X-Content-Type-Options', 'nosniff');
     const host = parseAuthority(request.get('host'));
-    if (!host || !isLoopbackName(host.hostname)) { next(new StoreError('LOCAL_ONLY', '仅允许本机访问 API', 403)); return; }
+    if (!host || !isAllowedApiHost(host.hostname)) { next(new StoreError('LOCAL_ONLY', '仅允许本机或已授权远程访问 API', 403)); return; }
     const origin = request.get('origin');
     if (origin !== undefined) {
       try {
         const parsed = new URL(origin);
         const originPort = parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
         const allowedOriginPorts = new Set(['7317', '5173', host.port]);
-        if (parsed.protocol !== 'http:' || !isLoopbackName(parsed.hostname.toLowerCase()) || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash || !allowedOriginPorts.has(originPort)) throw new Error('origin');
+        if (parsed.protocol !== 'http:' || !isAllowedApiHost(parsed.hostname.toLowerCase()) || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash || !allowedOriginPorts.has(originPort)) throw new Error('origin');
       } catch { next(new StoreError('INVALID_ORIGIN', 'Origin 必须来自本机 7317/5173 端口或当前 Host', 403)); return; }
     }
     next();
@@ -293,6 +293,17 @@ function parseAuthority(host: string | undefined): { hostname: string; port: str
   } catch { return undefined; }
 }
 function isLoopbackName(hostname: string): boolean { return hostname === '127.0.0.1' || hostname === 'localhost'; }
+function isTailscaleHost(hostname: string): boolean {
+  if (hostname.endsWith('.ts.net')) return true;
+  const parts = hostname.split('.').map(Number);
+  if (parts.length !== 4 || parts.some(n => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  // Tailscale CGNAT 100.64.0.0/10
+  return parts[0] === 100 && parts[1] >= 64 && parts[1] <= 127;
+}
+function isAllowedApiHost(hostname: string): boolean {
+  if (isLoopbackName(hostname)) return true;
+  return process.env.MASKCANVAS_ALLOW_REMOTE_BROWSER === '1' && isTailscaleHost(hostname);
+}
 function isBodyTooLarge(error: unknown): boolean { return typeof error === 'object' && error !== null && 'type' in error && (error as { type?: string }).type === 'entity.too.large'; }
 function isJsonParseError(error: unknown): boolean { return error instanceof SyntaxError && typeof error === 'object' && error !== null && 'body' in error; }
 

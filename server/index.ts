@@ -14,8 +14,9 @@ export function startServer() {
   const permissions = new ProjectPermissions(store);
   const jobs = new QwenJobs(store, { proposals, permissions, processing });
   const app = createApp({ staticDir, store, proposals, permissions, jobs });
-  const server = app.listen(7317, '127.0.0.1', () => {
-    console.log('MaskCanvas local server listening at http://127.0.0.1:7317');
+  const bindHost = process.env.MASKCANVAS_BIND || '127.0.0.1';
+  const server = app.listen(7317, bindHost, () => {
+    console.log(`MaskCanvas local server listening at http://${bindHost}:7317`);
   });
   server.on('close', () => jobs.close());
   return server;
