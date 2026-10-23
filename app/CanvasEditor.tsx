@@ -3,7 +3,7 @@ import type { Point, Region, Shape } from '../packages/shared/types';
 import { imageGeometry, sourcePoint, screenPoint, type View } from './canvas-geometry';
 import { renderMasks, drawContextRect, EDIT_COLOR } from './canvas-render';
 import { buildEdgeMap, snapToEdge, didSnapToEdge, traceEdge, type EdgeMap } from './magnetic-lasso';
-import { suggestRegionFromImageData } from './region-suggest';
+import { suggestRegionFromImageData, suggestBoxFromImageData } from './region-suggest';
 
 export type Tool = 'select' | 'brush' | 'erase' | 'rect' | 'polygon' | 'magnetic' | 'lasso' | 'move' | 'suggest';
 export type AnnotationKind = 'edit' | 'keep';
@@ -82,6 +82,7 @@ export function CanvasEditor(props: CanvasEditorProps) {
   const viewRef = useRef<View>({ scale: null, panX: 0, panY: 0 });
   const viewportRef = useRef({ width: 0, height: 0, dpr: 1 });
   const draftRef = useRef<Draft | null>(null);
+  const suggestBoxRef = useRef<{ start: Point; end: Point } | null>(null);
   const lassoRef = useRef<Lasso | null>(null);
   const pointerRef = useRef<Point | null>(null);
   const dragRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
@@ -92,10 +93,10 @@ export function CanvasEditor(props: CanvasEditorProps) {
   const [fitLabel, setFitLabel] = useState('…');
   const [lassoCount, setLassoCount] = useState(0);
   const [edgeError, setEdgeError] = useState('');
-  const [snapRadius, setSnapRadius] = useState(10);
-  const [contrast, setContrast] = useState(28);
-  // Higher strength = more magnetic pull (lower stickiness / margin).
-  const [snapStrength, setSnapStrength] = useState(40);
+  const [snapRadius, setSnapRadius] = useState(9);
+  const [contrast, setContrast] = useState(32);
+  // Higher strength = more magnetic pull (lower stickiness / margin). Default mild.
+  const [snapStrength, setSnapStrength] = useState(32);
   const [suggestStatus, setSuggestStatus] = useState('');
   const optionsRef = useRef({ snapRadius, contrast, snapStrength }); optionsRef.current = { snapRadius, contrast, snapStrength };
   const snapOpts = () => {
@@ -142,8 +143,20 @@ export function CanvasEditor(props: CanvasEditorProps) {
         maskRef.current ??= document.createElement('canvas'); tintRef.current ??= document.createElement('canvas');
         renderMasks(ctx, maskRef.current, tintRef.current, displayRegions, g, dpr, p.width, p.height, { activeRegionId: p.activeRegionId, previewFeather: true });
       }
+      const suggestBox = suggestBoxRef.current;
+      if (suggestBox) {
+        const x = Math.min(suggestBox.start.x, suggestBox.end.x), y = Math.min(suggestBox.start.y, suggestBox.end.y);
+        const w = Math.abs(suggestBox.end.x - suggestBox.start.x), h = Math.abs(suggestBox.end.y - suggestBox.start.y);
+        ctx.save(); ctx.translate(g.x, g.y); ctx.scale(g.scale, g.scale);
+        ctx.strokeStyle = '#222'; ctx.lineWidth = 2 / g.scale; ctx.setLineDash([6 / g.scale, 4 / g.scale]);
+        ctx.strokeRect(x, y, w, h);
+        ctx.strokeStyle = '#c9973f'; ctx.lineWidth = 1 / g.scale; ctx.strokeRect(x, y, w, h);
+        ctx.setLineDash([]); ctx.restore();
+      }
       const lasso = lassoRef.current;
-      const line = lasso ? [...lasso.points, ...lasso.preview.slice(1)] : draft?.tool === 'lasso' ? draft.points : [];
+      const rawLine = lasso ? [...lasso.points, ...lasso.preview.slice(1)] : draft?.tool === 'lasso' ? draft.points : [];
+      // Decimate dense live-wire previews so the rubber-band stays smooth while dragging.
+      const line = rawLine.length > 240 ? rawLine.filter((_, i) => i === 0 || i === rawLine.length - 1 || i % Math.ceil(rawLine.length / 200) === 0) : rawLine;
       if (line.length) {
         ctx.save(); ctx.translate(g.x, g.y); ctx.scale(g.scale, g.scale);
         ctx.beginPath(); ctx.moveTo(line[0].x, line[0].y);
@@ -202,7 +215,7 @@ export function CanvasEditor(props: CanvasEditorProps) {
 
   useEffect(() => { scheduleDraw(); }, [props.regions, props.activeRegionId, props.showMasks, props.tool, props.brushSize, snapRadius, contrast, snapStrength, scheduleDraw]);
   useEffect(() => {
-    draftRef.current = null; lassoRef.current = null; dragRef.current = null; setLassoCount(0); setSuggestStatus(''); scheduleDraw();
+    draftRef.current = null; suggestBoxRef.current = null; lassoRef.current = null; dragRef.current = null; setLassoCount(0); setSuggestStatus(''); scheduleDraw();
   }, [props.tool, props.activeRegionId, props.imageUrl, scheduleDraw]);
   useEffect(() => () => { if (rafRef.current !== null) cancelAnimationFrame(rafRef.current); rafRef.current = null; }, []);
 
@@ -242,7 +255,7 @@ export function CanvasEditor(props: CanvasEditorProps) {
     lasso.preview = map && snapped ? traceEdge(map, start, end, radius, contrast) : [start, end];
     // Auto-fasteners only along a confident snapped edge, and less often than before (was 16px).
     const travel = distance(start, end) * scale;
-    const autoAnchor = lasso.tool === 'magnetic' && snapped && !freehand && travel >= 52;
+    const autoAnchor = lasso.tool === 'magnetic' && snapped && !freehand && travel >= 64;
     if (anchor || autoAnchor) commitPath(lasso, lasso.preview);
     scheduleDraw();
   };
@@ -261,7 +274,7 @@ export function CanvasEditor(props: CanvasEditorProps) {
     else if (points.length > 10000) setEdgeError('套索过长，请分段选取。');
     scheduleDraw();
   };
-  const cancel = () => { draftRef.current = null; lassoRef.current = null; dragRef.current = null; setLassoCount(0); scheduleDraw(); };
+  const cancel = () => { draftRef.current = null; suggestBoxRef.current = null; lassoRef.current = null; dragRef.current = null; setLassoCount(0); scheduleDraw(); };
 
   const applyZoom = useCallback((scale: number | null, anchor?: Point) => {
     const g = geometry(), p = propsRef.current;
@@ -278,10 +291,56 @@ export function CanvasEditor(props: CanvasEditorProps) {
 
   useEffect(() => {
     const canvas = canvasRef.current; if (!canvas) return;
-    const wheel = (event: WheelEvent) => { event.preventDefault(); if (draftRef.current || lassoRef.current) return; const r = canvas.getBoundingClientRect(); applyZoom(geometry().scale * Math.exp(-event.deltaY * 0.0015), { x: event.clientX - r.left, y: event.clientY - r.top }); };
+    const wheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const tool = propsRef.current.tool;
+      // Brush/erase: scroll changes diameter; hold Ctrl/Cmd to zoom instead.
+      if ((tool === 'brush' || tool === 'erase') && !event.ctrlKey && !event.metaKey && !draftRef.current) {
+        const delta = event.deltaY > 0 ? -4 : 4;
+        propsRef.current.onBrushSizeChange?.(Math.max(1, Math.min(512, propsRef.current.brushSize + delta)));
+        return;
+      }
+      if (draftRef.current || lassoRef.current || suggestBoxRef.current) return;
+      const r = canvas.getBoundingClientRect();
+      applyZoom(geometry().scale * Math.exp(-event.deltaY * 0.0015), { x: event.clientX - r.left, y: event.clientY - r.top });
+    };
     canvas.addEventListener('wheel', wheel, { passive: false });
     return () => canvas.removeEventListener('wheel', wheel);
   }, [props.imageUrl, applyZoom, geometry]);
+
+
+  const runSuggest = (seed: Point, box?: { x: number; y: number; width: number; height: number }) => {
+    const p = propsRef.current;
+    const image = imageRef.current;
+    if (!image) { setSuggestStatus('照片尚未载入。'); return; }
+    setSuggestStatus('正在分析边缘与色彩…');
+    try {
+      const maxSide = 1280;
+      const factor = Math.min(1, maxSide / Math.max(p.width, p.height));
+      const w = Math.max(1, Math.round(p.width * factor)), h = Math.max(1, Math.round(p.height * factor));
+      const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+      ctx.drawImage(image, 0, 0, w, h);
+      const imageData = ctx.getImageData(0, 0, w, h);
+      const strength = optionsRef.current.snapStrength / 100;
+      const opts = {
+        edgeBarrier: 0.16 + (1 - strength) * 0.14,
+        colourTolerance: box ? 54 : 40,
+        maxFraction: box ? 1 : 0.38,
+        closeRadius: 1,
+      };
+      const result = box && Math.abs(box.width) >= 6 && Math.abs(box.height) >= 6
+        ? suggestBoxFromImageData(imageData, box, p.width, p.height, opts)
+        : suggestRegionFromImageData(imageData, seed, p.width, p.height, opts);
+      if (!result) { setSuggestStatus('未找到可用区域，试着点在更均匀的色块内，或拖出更大框。'); return; }
+      p.onShape(p.activeRegionId, p.annotationKind, result.shape);
+      const bounds = [result.boundedByEdge && '边缘', result.boundedByColour && '色彩', result.boundedBySize && '面积', result.boundedByBox && '框选'].filter(Boolean).join(' · ');
+      setSuggestStatus(`已建议 ${result.pixels.toLocaleString()} px${bounds ? `（止于${bounds}）` : ''} · 画笔/扩张收缩继续修`);
+      setTimeout(() => setSuggestStatus(''), 4800);
+    } catch {
+      setSuggestStatus('建议失败，可改用套索或画笔。');
+    }
+  };
 
   const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (event.button !== 0 && event.button !== 1) return;
@@ -297,29 +356,10 @@ export function CanvasEditor(props: CanvasEditorProps) {
       const hit = [...p.regions].reverse().find(r => containsRegion(r, point)); if (hit) p.onRegionSelect?.(hit.id); return;
     }
     if (p.tool === 'suggest') {
-      setSuggestStatus('正在分析边缘…');
-      const image = imageRef.current;
-      if (!image) { setSuggestStatus('照片尚未载入。'); return; }
-      try {
-        const maxSide = 1024;
-        const factor = Math.min(1, maxSide / Math.max(p.width, p.height));
-        const w = Math.max(1, Math.round(p.width * factor)), h = Math.max(1, Math.round(p.height * factor));
-        const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
-        const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-        ctx.drawImage(image, 0, 0, w, h);
-        const result = suggestRegionFromImageData(ctx.getImageData(0, 0, w, h), point, p.width, p.height, {
-          edgeBarrier: 0.18 + (1 - optionsRef.current.snapStrength / 100) * 0.12,
-          colourTolerance: 48,
-          maxFraction: 0.4,
-        });
-        if (!result) { setSuggestStatus('未找到可用区域，试试点在更均匀的色块内。'); return; }
-        p.onShape(p.activeRegionId, p.annotationKind, result.shape);
-        const bounds = [result.boundedByEdge && '边缘', result.boundedByColour && '色彩', result.boundedBySize && '面积上限'].filter(Boolean).join(' · ');
-        setSuggestStatus(`已建议 ${result.pixels.toLocaleString()} px${bounds ? `（止于${bounds}）` : ''} · 可用画笔/形态学继续修`);
-        setTimeout(() => setSuggestStatus(''), 4200);
-      } catch {
-        setSuggestStatus('建议失败，可改用套索或画笔。');
-      }
+      suggestBoxRef.current = { start: point, end: point };
+      event.currentTarget.setPointerCapture(event.pointerId);
+      setSuggestStatus('拖出范围可框选建议；轻点则从落点扩散');
+      scheduleDraw();
       return;
     }
     if (p.tool === 'erase' && !p.regions.some(r => r.id === p.activeRegionId)) { setEdgeError('先选择要擦除的区域，再使用橡皮。'); return; }
@@ -351,6 +391,7 @@ export function CanvasEditor(props: CanvasEditorProps) {
     const raw = eventPoint(event);
     pointerRef.current = raw.x >= 0 && raw.y >= 0 && raw.x <= props.width && raw.y <= props.height ? raw : null;
     const point = clampPoint(raw), draft = draftRef.current;
+    if (suggestBoxRef.current) { suggestBoxRef.current.end = point; scheduleDraw(); return; }
     if (lassoRef.current) { updateLasso(point, event.altKey); return; }
     if (draft) {
       // Live Alt toggles temporary erase while a brush stroke is in progress.
@@ -369,6 +410,17 @@ export function CanvasEditor(props: CanvasEditorProps) {
   };
   const onPointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
     dragRef.current = null;
+    const box = suggestBoxRef.current;
+    if (box) {
+      const point = clampPoint(eventPoint(event)); box.end = point;
+      suggestBoxRef.current = null;
+      const x = Math.min(box.start.x, box.end.x), y = Math.min(box.start.y, box.end.y);
+      const w = Math.abs(box.end.x - box.start.x), h = Math.abs(box.end.y - box.start.y);
+      if (w >= 6 && h >= 6) runSuggest({ x: x + w / 2, y: y + h / 2 }, { x, y, width: w, height: h });
+      else runSuggest(box.start);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      scheduleDraw(); return;
+    }
     const draft = draftRef.current; if (!draft) return;
     const point = clampPoint(eventPoint(event)); draft.end = point;
     if (draft.tool !== 'rect' && distance(draft.points.at(-1)!, point) > 0.05) draft.points.push(point);
@@ -405,18 +457,21 @@ export function CanvasEditor(props: CanvasEditorProps) {
       onDoubleClick={e => { if (lassoRef.current) { e.preventDefault(); finishLasso(); } }} />
       : <div className="canvas-empty"><strong>画布等待照片</strong><span>导入照片或从项目入口选择一个项目</span></div>}
     {props.imageUrl && (props.tool === 'brush' || props.tool === 'erase') && <div className="canvas-tool-options" aria-label="笔刷选项">
-      <strong>{props.tool === 'erase' ? '橡皮' : '画笔'}</strong><label>直径 <input aria-label="笔刷直径" type="range" min="1" max="512" value={props.brushSize} onChange={e => props.onBrushSizeChange?.(Number(e.target.value))} /></label><span>{props.brushSize} px</span><small>[ ] 调整大小{props.tool === 'brush' ? ' · Alt 临时橡皮' : ''}</small>
+      <strong>{props.tool === 'erase' ? '橡皮' : '画笔'}</strong><label>直径 <input aria-label="笔刷直径" type="range" min="1" max="512" value={props.brushSize} onChange={e => props.onBrushSizeChange?.(Number(e.target.value))} /></label><span>{props.brushSize} px</span><small>滚轮 / [ ] 调大小 · Ctrl+滚轮缩放{props.tool === 'brush' ? ' · Alt 临时橡皮' : ''}</small>
     </div>}
     {props.imageUrl && isLasso && <div className="canvas-tool-options lasso-options" aria-label="套索选项">
       <select aria-label="套索模式" value={props.tool} onChange={e => props.onToolChange?.(e.target.value as Tool)}><option value="magnetic">磁性套索</option><option value="lasso">自由套索</option><option value="polygon">多边形套索</option></select>
       {props.tool === 'magnetic' && <><label>吸附范围 <input aria-label="磁性吸附范围" type="range" min="4" max="32" value={snapRadius} onChange={e => setSnapRadius(Number(e.target.value))} /></label><span>{snapRadius} px</span><label>边缘阈值 <input aria-label="边缘强度阈值" type="range" min="10" max="80" value={contrast} onChange={e => setContrast(Number(e.target.value))} /></label><span>{contrast}%</span><label>吸附强度 <input aria-label="吸附强度" type="range" min="0" max="100" value={snapStrength} onChange={e => setSnapStrength(Number(e.target.value))} /></label><span>{snapStrength}%</span><small>低=更自由 · 高=更贴边 · Alt 临时关闭</small></>}
     </div>}
+    {props.imageUrl && <div className="canvas-active-tool" aria-live="polite">{({
+      select: '选择 V', brush: '画笔 B', erase: '擦除 E', rect: '矩形 R', magnetic: '磁性套索 L', lasso: '自由套索', polygon: '多边形套索', suggest: '建议 G', move: '平移 H',
+    } as Record<string, string>)[props.tool] || props.tool}</div>}
     {props.imageUrl && <div className="zoom-dock" aria-label="画布缩放">
-      <button type="button" aria-label="缩小" onClick={() => applyZoom(geometry().scale / 1.2)}>−</button><button type="button" className="zoom-fit" onClick={() => applyZoom(null)}>适合</button>
+      <button type="button" aria-label="缩小" onClick={() => applyZoom(geometry().scale / 1.2)}>−</button><button type="button" className={zoomLabel === '适合' ? 'zoom-fit is-current' : 'zoom-fit'} onClick={() => applyZoom(null)}>适合</button>
       <span className="zoom-value">{zoomLabel === '适合' ? fitLabel : zoomLabel}</span>
-      <button type="button" className="zoom-fit" onClick={() => applyZoom(1)}>100%</button><button type="button" aria-label="放大" onClick={() => applyZoom(geometry().scale * 1.2)}>＋</button>
+      <button type="button" className={zoomLabel === '100%' ? 'zoom-fit is-current' : 'zoom-fit'} onClick={() => applyZoom(1)}>100%</button><button type="button" aria-label="放大" onClick={() => applyZoom(geometry().scale * 1.2)}>＋</button>
     </div>}
-    {props.imageUrl && isSuggest && <div className="canvas-tool-options" aria-label="点选建议"><strong>点选建议</strong><small>点击色块/主体内部，按边缘+色彩生成可修多边形（非 SAM）</small></div>}
-    {(edgeError || suggestStatus || isLasso || isSuggest) && <div className="canvas-hint" role="status">{edgeError || suggestStatus || (isSuggest ? '点击照片生成建议选区 · 再用画笔/扩张收缩精修 · Esc 清除提示' : props.tool === 'lasso' ? '按住拖画，松开闭合 · 空格平移不丢路径 · Esc 取消' : props.tool === 'polygon' ? (lassoCount ? `已设 ${lassoCount} 个锚点 · 点击加点 · Backspace 回退 · Enter 闭合 · 空格平移` : '点击放置锚点 · Enter / 双击闭合 · 空格平移') : lassoCount ? `已设 ${lassoCount} 个锚点 · 近强边缘才吸附 · 点击锁定 · Alt 自由画 · Backspace 回退 · Enter 闭合 · 空格平移` : '点击起点 · 靠近清晰边缘才会吸附 · Alt 临时关闭吸附 · 空格平移')}</div>}
+    {props.imageUrl && isSuggest && <div className="canvas-tool-options" aria-label="点选建议"><strong>点选 / 框选建议</strong><small>轻点扩散 · 拖框约束范围 · 非 SAM，可再精修</small></div>}
+    {(edgeError || suggestStatus || isLasso || isSuggest) && <div className="canvas-hint" role="status">{edgeError || suggestStatus || (isSuggest ? '点击或拖框生成建议选区 · 画笔/形态学精修 · Esc 取消' : props.tool === 'lasso' ? '按住拖画，松开闭合 · 空格平移 · Esc 取消' : props.tool === 'polygon' ? (lassoCount ? `已设 ${lassoCount} 个锚点 · 点击加点 · Backspace 回退 · Enter/双击闭合 · 空格平移` : '点击放置锚点 · Enter / 双击闭合 · 空格平移') : lassoCount ? `已设 ${lassoCount} 个锚点 · 近强边缘才吸附 · 点击锁定 · Alt 自由 · Backspace 回退 · Enter/双击闭合 · 空格平移` : '点击起点 · 靠近清晰边缘才会吸附 · Alt 关闭吸附 · Enter/双击闭合')}</div>}
   </div>;
 }

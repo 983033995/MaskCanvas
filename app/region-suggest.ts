@@ -1,16 +1,20 @@
 import type { Point, Shape } from '../packages/shared/types';
 import { buildEdgeMap, type EdgeMap } from './magnetic-lasso';
-import { maskToPolygon, createMask, countMaskPixels, type MaskBuffer } from './mask-morphology';
+import { maskToPolygon, createMask, countMaskPixels, dilateMask, erodeMask, type MaskBuffer } from './mask-morphology';
 
 export interface SuggestOptions {
-  /** Edge strength (0–1) treated as a hard wall. Default 0.22. */
+  /** Edge strength (0–1) treated as a hard wall. Default 0.2. */
   edgeBarrier?: number;
-  /** Max colour ΔE-ish (0–255 RGB L1/3) to stay in seed region. Default 42. */
+  /** Max colour Δ (0–255 RGB L1/3) to stay in seed region. Default 38. */
   colourTolerance?: number;
-  /** Hard cap on filled pixels (safety). Default 35% of image. */
+  /** Hard cap on filled pixels. Default 35% of image. */
   maxFraction?: number;
-  /** Seed dilate in source px so a click near an edge still seeds inside. Default 2. */
+  /** Seed dilate in source px. Default 2. */
   seedRadius?: number;
+  /** Optional axis-aligned constraint in image pixel space. */
+  clipBox?: { x: number; y: number; width: number; height: number };
+  /** Soft closing iterations after fill (dilate then erode). Default 1. */
+  closeRadius?: number;
 }
 
 export interface SuggestResult {
@@ -19,6 +23,7 @@ export interface SuggestResult {
   boundedByEdge: boolean;
   boundedByColour: boolean;
   boundedBySize: boolean;
+  boundedByBox: boolean;
 }
 
 function sampleRgb(data: Uint8ClampedArray, width: number, x: number, y: number): [number, number, number] {
@@ -27,13 +32,31 @@ function sampleRgb(data: Uint8ClampedArray, width: number, x: number, y: number)
 }
 
 function colourDistance(a: [number, number, number], b: [number, number, number]): number {
-  return (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2])) / 3;
+  // Slightly weight green (human luminance bias) without full Lab.
+  return (0.3 * Math.abs(a[0] - b[0]) + 0.4 * Math.abs(a[1] - b[1]) + 0.3 * Math.abs(a[2] - b[2]));
+}
+
+function inBox(x: number, y: number, box?: SuggestOptions['clipBox']): boolean {
+  if (!box) return true;
+  return x >= box.x && y >= box.y && x < box.x + box.width && y < box.y + box.height;
+}
+
+function medianColour(data: Uint8ClampedArray, width: number, height: number, box: { x: number; y: number; width: number; height: number }): [number, number, number] {
+  const rs: number[] = [], gs: number[] = [], bs: number[] = [];
+  const x0 = Math.max(0, Math.floor(box.x)), y0 = Math.max(0, Math.floor(box.y));
+  const x1 = Math.min(width, Math.ceil(box.x + box.width)), y1 = Math.min(height, Math.ceil(box.y + box.height));
+  const step = Math.max(1, Math.floor(Math.sqrt(((x1 - x0) * (y1 - y0)) / 400)));
+  for (let y = y0; y < y1; y += step) for (let x = x0; x < x1; x += step) {
+    const [r, g, b] = sampleRgb(data, width, x, y);
+    rs.push(r); gs.push(g); bs.push(b);
+  }
+  const mid = (arr: number[]) => { arr.sort((a, b) => a - b); return arr[Math.floor(arr.length / 2)] ?? 0; };
+  return [mid(rs), mid(gs), mid(bs)];
 }
 
 /**
  * Click-to-suggest region: flood-fill from a seed, stopped by strong edges and
- * colour distance. No SAM / ONNX — pure local edge+colour heuristic for
- * “suggest → human refine” annotate UX.
+ * colour distance. Optional clip box for drag-rect suggest. Soft-close cleans holes.
  */
 export function suggestRegionFromClick(
   rgba: Uint8ClampedArray,
@@ -45,22 +68,29 @@ export function suggestRegionFromClick(
   if (width < 2 || height < 2 || rgba.length < width * height * 4) return null;
   const sx = Math.max(0, Math.min(width - 1, Math.round(seed.x)));
   const sy = Math.max(0, Math.min(height - 1, Math.round(seed.y)));
-  const edgeBarrier = options.edgeBarrier ?? 0.22;
-  const colourTolerance = options.colourTolerance ?? 42;
+  if (!inBox(sx, sy, options.clipBox)) return null;
+
+  const edgeBarrier = options.edgeBarrier ?? 0.2;
+  const colourTolerance = options.colourTolerance ?? 38;
   const maxFraction = options.maxFraction ?? 0.35;
   const seedRadius = Math.max(0, Math.round(options.seedRadius ?? 2));
+  const closeRadius = Math.max(0, Math.round(options.closeRadius ?? 1));
   const maxPixels = Math.max(16, Math.floor(width * height * maxFraction));
 
   const map: EdgeMap = buildEdgeMap(rgba, width, height);
-  const seedColour = sampleRgb(rgba, width, sx, sy);
+  const seedColour = options.clipBox
+    ? medianColour(rgba, width, height, options.clipBox)
+    : sampleRgb(rgba, width, sx, sy);
   const mask: MaskBuffer = createMask(width, height, 0);
   const queue: number[] = [];
   let boundedByEdge = false;
   let boundedByColour = false;
   let boundedBySize = false;
+  let boundedByBox = false;
 
   const trySeed = (x: number, y: number) => {
     if (x < 0 || y < 0 || x >= width || y >= height) return;
+    if (!inBox(x, y, options.clipBox)) return;
     const id = y * width + x;
     if (mask[id]) return;
     mask[id] = 255;
@@ -72,7 +102,6 @@ export function suggestRegionFromClick(
   if (!queue.length) trySeed(sx, sy);
   if (!queue.length) return null;
 
-  // Clear seeds that landed on a barrier pixel (except exact click).
   for (let i = queue.length - 1; i >= 0; i--) {
     const id = queue[i];
     if (map.strength[id] >= edgeBarrier && id !== sy * width + sx) {
@@ -86,7 +115,7 @@ export function suggestRegionFromClick(
   }
 
   let head = 0;
-  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const;
   while (head < queue.length) {
     if (queue.length > maxPixels) { boundedBySize = true; break; }
     const id = queue[head++];
@@ -94,9 +123,12 @@ export function suggestRegionFromClick(
     for (const [dx, dy] of dirs) {
       const nx = x + dx, ny = y + dy;
       if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+      if (!inBox(nx, ny, options.clipBox)) { boundedByBox = true; continue; }
       const nid = ny * width + nx;
       if (mask[nid]) continue;
-      if (map.strength[nid] >= edgeBarrier) { boundedByEdge = true; continue; }
+      // Diagonal steps require a slightly stronger barrier so weak corners don't leak.
+      const barrier = (dx && dy) ? edgeBarrier * 0.92 : edgeBarrier;
+      if (map.strength[nid] >= barrier) { boundedByEdge = true; continue; }
       const dist = colourDistance(seedColour, sampleRgb(rgba, width, nx, ny));
       if (dist > colourTolerance) { boundedByColour = true; continue; }
       mask[nid] = 255;
@@ -104,9 +136,16 @@ export function suggestRegionFromClick(
     }
   }
 
-  const pixels = countMaskPixels(mask);
+  let cleaned = mask;
+  if (closeRadius > 0) {
+    cleaned = erodeMask(dilateMask(mask, width, height, closeRadius), width, height, closeRadius);
+    // Keep seed membership.
+    cleaned[sy * width + sx] = 255;
+  }
+
+  const pixels = countMaskPixels(cleaned);
   if (pixels < 4) return null;
-  const polygon = maskToPolygon(mask, width, height);
+  const polygon = maskToPolygon(cleaned, width, height);
   if (!polygon || polygon.length < 3) return null;
   return {
     shape: { type: 'polygon', points: polygon },
@@ -114,10 +153,35 @@ export function suggestRegionFromClick(
     boundedByEdge,
     boundedByColour,
     boundedBySize,
+    boundedByBox,
   };
 }
 
-/** Downscale helper for large photos before suggest (keeps original-coord output). */
+/** Drag-box suggest: fill inside the box from its centre using box median colour. */
+export function suggestRegionFromBox(
+  rgba: Uint8ClampedArray,
+  width: number,
+  height: number,
+  box: { x: number; y: number; width: number; height: number },
+  options: SuggestOptions = {},
+): SuggestResult | null {
+  const x = Math.max(0, Math.floor(Math.min(box.x, box.x + box.width)));
+  const y = Math.max(0, Math.floor(Math.min(box.y, box.y + box.height)));
+  const w = Math.min(width - x, Math.ceil(Math.abs(box.width)));
+  const h = Math.min(height - y, Math.ceil(Math.abs(box.height)));
+  if (w < 4 || h < 4) return null;
+  const clip = { x, y, width: w, height: h };
+  const seed = { x: x + w / 2, y: y + h / 2 };
+  return suggestRegionFromClick(rgba, width, height, seed, {
+    ...options,
+    clipBox: clip,
+    maxFraction: options.maxFraction ?? 1,
+    colourTolerance: options.colourTolerance ?? 52,
+    edgeBarrier: options.edgeBarrier ?? 0.24,
+    closeRadius: options.closeRadius ?? 1,
+  });
+}
+
 export function suggestRegionFromImageData(
   imageData: ImageData,
   seedOriginal: Point,
@@ -126,18 +190,52 @@ export function suggestRegionFromImageData(
   options?: SuggestOptions,
 ): SuggestResult | null {
   const { width, height, data } = imageData;
-  const seed = {
-    x: seedOriginal.x * width / imageWidth,
-    y: seedOriginal.y * height / imageHeight,
-  };
-  const result = suggestRegionFromClick(data, width, height, seed, options);
+  const scaleX = width / imageWidth, scaleY = height / imageHeight;
+  const seed = { x: seedOriginal.x * scaleX, y: seedOriginal.y * scaleY };
+  const mapped: SuggestOptions = { ...options };
+  if (options?.clipBox) {
+    mapped.clipBox = {
+      x: options.clipBox.x * scaleX,
+      y: options.clipBox.y * scaleY,
+      width: options.clipBox.width * scaleX,
+      height: options.clipBox.height * scaleY,
+    };
+  }
+  const result = suggestRegionFromClick(data, width, height, seed, mapped);
   if (!result || result.shape.type !== 'polygon') return result;
-  const scaleX = imageWidth / width, scaleY = imageHeight / height;
+  const outX = imageWidth / width, outY = imageHeight / height;
   return {
     ...result,
     shape: {
       type: 'polygon',
-      points: result.shape.points.map(p => ({ x: p.x * scaleX, y: p.y * scaleY })),
+      points: result.shape.points.map(p => ({ x: p.x * outX, y: p.y * outY })),
+    },
+  };
+}
+
+export function suggestBoxFromImageData(
+  imageData: ImageData,
+  boxOriginal: { x: number; y: number; width: number; height: number },
+  imageWidth: number,
+  imageHeight: number,
+  options?: SuggestOptions,
+): SuggestResult | null {
+  const { width, height, data } = imageData;
+  const scaleX = width / imageWidth, scaleY = height / imageHeight;
+  const box = {
+    x: boxOriginal.x * scaleX,
+    y: boxOriginal.y * scaleY,
+    width: boxOriginal.width * scaleX,
+    height: boxOriginal.height * scaleY,
+  };
+  const result = suggestRegionFromBox(data, width, height, box, options);
+  if (!result || result.shape.type !== 'polygon') return result;
+  const outX = imageWidth / width, outY = imageHeight / height;
+  return {
+    ...result,
+    shape: {
+      type: 'polygon',
+      points: result.shape.points.map(p => ({ x: p.x * outX, y: p.y * outY })),
     },
   };
 }

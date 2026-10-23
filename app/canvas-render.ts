@@ -58,7 +58,7 @@ export function renderMasks(
   const m = mask.getContext('2d')!, t = tint.getContext('2d')!;
   const sx = pixelWidth / g.width, sy = pixelHeight / g.height;
   const previewFeather = options?.previewFeather !== false;
-  const maxFeatherPreview = 1_200_000;
+  const maxFeatherPreview = 4_000_000; // downsampled below when large
   const canRasterPreview = imageWidth * imageHeight <= maxFeatherPreview;
 
   for (const region of [...regions].sort((a, b) => Number(a.kind === 'keep') - Number(b.kind === 'keep'))) {
@@ -72,12 +72,21 @@ export function renderMasks(
 
     const useFeatherPreview = previewFeather && region.kind === 'edit' && region.feather > 0 && region.shapes.length > 0 && canRasterPreview;
     if (useFeatherPreview) {
-      const binary = rasterizeRegionMask(region.shapes, imageWidth, imageHeight);
-      const alpha = inwardFeatherAlpha(binary, imageWidth, imageHeight, region.feather);
+      // Downsample large photos for the soft-rim overlay; draw scaled back to original coords.
+      const maxSide = 1024;
+      const factor = Math.min(1, maxSide / Math.max(imageWidth, imageHeight));
+      const fw = Math.max(1, Math.round(imageWidth * factor)), fh = Math.max(1, Math.round(imageHeight * factor));
+      const scaledShapes = factor === 1 ? region.shapes : region.shapes.map(shape => {
+        if (shape.type === 'rect') return { ...shape, x: shape.x * factor, y: shape.y * factor, width: shape.width * factor, height: shape.height * factor };
+        if (shape.type === 'brush') return { ...shape, radius: shape.radius * factor, points: shape.points.map(p => ({ x: p.x * factor, y: p.y * factor })) };
+        return { ...shape, points: shape.points.map(p => ({ x: p.x * factor, y: p.y * factor })) };
+      });
+      const binary = rasterizeRegionMask(scaledShapes, fw, fh);
+      const alpha = inwardFeatherAlpha(binary, fw, fh, Math.max(1, Math.round(region.feather * factor)));
       const featherCanvas = document.createElement('canvas');
-      featherCanvas.width = imageWidth; featherCanvas.height = imageHeight;
+      featherCanvas.width = fw; featherCanvas.height = fh;
       const fctx = featherCanvas.getContext('2d')!;
-      const image = fctx.createImageData(imageWidth, imageHeight);
+      const image = fctx.createImageData(fw, fh);
       for (let i = 0; i < alpha.length; i++) {
         const o = i * 4;
         image.data[o] = 255; image.data[o + 1] = 255; image.data[o + 2] = 255; image.data[o + 3] = alpha[i];
@@ -86,7 +95,8 @@ export function renderMasks(
       m.setTransform(1, 0, 0, 1, 0, 0); m.clearRect(0, 0, pixelWidth, pixelHeight);
       m.save();
       m.setTransform(sx, 0, 0, sy, 0, 0); m.translate(g.x, g.y); m.scale(g.scale, g.scale);
-      m.drawImage(featherCanvas, 0, 0);
+      m.imageSmoothingEnabled = true;
+      m.drawImage(featherCanvas, 0, 0, fw, fh, 0, 0, imageWidth, imageHeight);
       m.restore();
     }
 
