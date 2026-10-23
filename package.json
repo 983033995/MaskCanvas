@@ -1,0 +1,40 @@
+{
+  "name": "maskcanvas",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n server,app \"npm:dev:server\" \"npm:dev:app\"",
+    "dev:server": "tsx watch server/index.ts",
+    "dev:app": "vite --host 127.0.0.1 --port 5173 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test server/*.test.ts mcp/*.test.ts app/*.test.ts",
+    "start": "tsx server/index.ts",
+    "mcp": "tsx mcp/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@phosphor-icons/react": "^2.1.10",
+    "archiver": "^8.0.0",
+    "express": "^5.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "sharp": "^0.35.5",
+    "yauzl": "^3.4.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/archiver": "^8.0.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/yauzl": "^3.4.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^10.0.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.5"
+  }
+}
