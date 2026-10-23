@@ -578,3 +578,60 @@ button:disabled { cursor: not-allowed !important; opacity: .48; }
   .proposal-mode-banner small { max-width: 190px; }
   .proposal-mode-banner .button { min-height: 29px; padding: 0 7px; font-size: 9px; }
 }
+
+
+/* —— UX workbench: morphology + S06 wipe/diff —— */
+.region-swatch.context {
+  background: transparent;
+  border: 1.5px dashed #4d7276;
+  box-shadow: inset 0 0 0 1px rgb(77 114 118 / 18%);
+}
+.morph-tools {
+  margin: 12px 0 4px;
+  padding: 10px 10px 11px;
+  border: 1px solid #e5e5de;
+  border-radius: 6px;
+  background: #f7f7f2;
+}
+.morph-tools .slider-heading { margin-bottom: 6px; }
+.morph-tools input[type="range"] { width: 100%; height: 3px; margin: 2px 0 10px; accent-color: #7c8a70; cursor: pointer; }
+.morph-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.morph-button { min-height: 32px; padding: 0 6px; font-size: 11px; gap: 5px; }
+.morph-tools > small { display: block; margin-top: 8px; color: #9a9b93; font-size: 9px; line-height: 1.45; }
+
+.compare-controls { display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin: 6px 0 0 5px; }
+.compare-mode-switch { display: inline-flex; gap: 3px; padding: 3px; border: 1px solid #e2e3dc; border-radius: 5px; background: #f3f3ee; }
+.compare-mode-switch button {
+  min-height: 28px; padding: 0 8px; border: 1px solid transparent; border-radius: 4px;
+  display: inline-flex; align-items: center; gap: 5px; color: #75776f; background: transparent;
+  font-size: 10px; cursor: pointer; white-space: nowrap;
+}
+.compare-mode-switch button:hover:not(:disabled) { color: #3f433a; background: #fffefa; }
+.compare-mode-switch button.active { color: #4f5d45; background: #fffefa; border-color: #d5dacd; box-shadow: 0 1px 2px rgb(38 39 34 / 5%); }
+.validation-compare-switch { margin-top: 4px; width: 100%; }
+.validation-compare-switch button { flex: 1; justify-content: center; }
+
+.protect-zero-chip {
+  display: flex; align-items: center; gap: 6px; padding: 7px 9px; border-radius: 5px;
+  font-size: 10px; line-height: 1.35;
+}
+.protect-zero-chip strong { font-size: 11px; font-weight: 650; }
+.protect-zero-chip.ok { color: #5d7354; background: #edf1e9; border: 1px solid #d7e0d1; }
+.protect-zero-chip.bad { color: #9b5f50; background: #f5ece8; border: 1px solid #ead9d2; }
+
+.review-wrap { background: #d8d9d3; }
+.review-compare { position: relative; width: 100%; height: 100%; min-height: 0; overflow: hidden; background: #dfe0da; }
+.review-canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: ew-resize; }
+.review-overlay-labels { position: absolute; inset: 12px 12px auto; display: flex; justify-content: space-between; pointer-events: none; gap: 8px; }
+.review-label { padding: 6px 9px; border-radius: 3px; color: #4b4d45; background: rgb(255 255 251 / 91%); font-size: 10px; }
+.review-badges { position: absolute; left: 12px; right: 12px; bottom: 14px; display: flex; flex-wrap: wrap; gap: 6px; pointer-events: none; }
+.review-badge { padding: 6px 9px; border-radius: 4px; background: rgb(255 255 251 / 92%); color: #55574f; font-size: 10px; box-shadow: 0 2px 10px rgb(31 32 27 / 10%); }
+.review-badge.ok { color: #5d7354; background: rgb(237 241 233 / 94%); }
+.review-badge.bad { color: #9b5f50; background: rgb(245 236 232 / 94%); }
+.review-badge.info { color: #5f7899; }
+.review-badge.unknown { color: #82837c; }
+.review-error, .review-loading {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  padding: 10px 14px; border-radius: 6px; background: rgb(44 46 41 / 84%); color: #f7f7f3; font-size: 12px;
+}
+.review-exit { z-index: 3; }

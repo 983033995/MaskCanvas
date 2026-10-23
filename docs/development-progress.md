@@ -131,3 +131,16 @@
 该真实任务另已创建本会话 heartbeat `sofa-queen`（每10分钟有界检查、无变化静默、候选完成后继续视觉与范围验收并反馈，终态停止）。这是当前任务的调度跟进，不宣称所有客户端均已具备通用事件回调。运行状态及照片截图保留在被忽略的 `projects/reviews/sofa-queen-20261023/`，不提交用户照片到文档资产。
 
 本轮 `rtk npm test` 71/71、生产构建与 diff-check 通过。仅正常重启 MaskCanvas 加载等待原因，原照片项目的 project.json 哈希不变，原任务 ID/确认记录保留，ComfyUI 未重启。当前任务仍后台排队，最终状态由原 ID 查询，不能用本轮测试结果冒充这张照片已精修完成。
+
+
+## 2026-10-23 · 分支 `ux/canvas-workbench` 画布体验
+
+优先修复磁性套索粘滞（见 [selection-tools.md](selection-tools.md)），并落地选区形态学、向内羽化即时预览、Wipe/差异热图验收与 E/K/C 图例等交互（**未**引入 SAM）。
+
+| 检查 | 结果 |
+|---|---|
+| `npm test` | 81/81 |
+| `npm run build` | 通过 |
+| 本机 `npm start` + `scripts/ux-verify.mjs` | 会话/建项/存区、形态学、吸附远近、差异热图、静态 bundle 均通过 |
+
+证据：[ux-canvas-workbench-20261023.md](evidence/ux-canvas-workbench-20261023.md)。未推送远程；未改 Qwen/GPT 作业语义与 E/K/C 硬保护合成规则。

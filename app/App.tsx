@@ -29,12 +29,19 @@ import {
   WarningCircle,
   X,
   ArrowsLeftRight,
+  ArrowsOut,
+  ArrowsIn,
+  CircleHalf,
+  Path,
 } from '@phosphor-icons/react';
 import type { AnnotationDocument, Capabilities, EditProposal, Job, Project, ProjectSummary, Region, Shape, Version } from '../packages/shared/types';
 import { api, ApiError, downloadBlob, fileToDataUrl, getPendingJobSubmissions, getPendingPlanJobSubmissions, type PendingJobSubmission, type PendingPlanJobSubmission, type PlanJob, type ProjectGrant, type ProjectGrantInput, type ProjectPermissions as ProjectPermissionsSnapshot, type ProposalDocument, type RebindResult } from './api';
 import { CanvasEditor, type AnnotationKind, type Tool } from './CanvasEditor';
 import { ProposalReview, type ProposalDraftFields } from './ProposalReview';
 import { RegionContextControl } from './RegionContextControl';
+import { ReviewCompare } from './ReviewCompare';
+import { morphRegionShapes, type MorphOp } from './mask-morphology';
+import type { ReviewCompareMode } from './canvas-diff';
 import './styles.css';
 
 type Page = 'projects' | 'packages' | 'settings' | 'editor';
@@ -166,6 +173,8 @@ export default function App() {
   const [proposalsLoading, setProposalsLoading] = useState(false);
   const [proposalError, setProposalError] = useState('');
   const [isComparing, setIsComparing] = useState(false);
+  const [compareMode, setCompareMode] = useState<ReviewCompareMode>('side');
+  const [morphRadius, setMorphRadius] = useState(4);
   const [showMasks, setShowMasks] = useState(true);
   const [tool, setTool] = useState<Tool>('select');
   const [annotationKind, setAnnotationKind] = useState<AnnotationKind>('edit');
@@ -692,6 +701,23 @@ export default function App() {
   const undoShape = () => {
     if (!selectedRegion) return;
     updateRegion(selectedRegion.id, { shapes: selectedRegion.shapes.slice(0, -1) });
+  };
+
+  const applyMorphology = (op: MorphOp) => {
+    if (!currentProject || !selectedRegion || proposalReadOnly) return;
+    if (!selectedRegion.shapes.length && op !== 'invert') {
+      notify('info', '当前区域还没有形状，无法扩张或收缩。');
+      return;
+    }
+    const result = morphRegionShapes(selectedRegion, currentProject.width, currentProject.height, op, morphRadius);
+    updateRegion(selectedRegion.id, { shapes: result.shapes });
+    setShowMasks(true);
+    if (result.empty) {
+      notify('info', op === 'contract' ? '收缩后选区已清空。' : '形态学结果为空。');
+      return;
+    }
+    const label = op === 'expand' ? '扩张' : op === 'contract' ? '收缩' : '反选';
+    notify('success', `${label}完成：${result.beforePixels.toLocaleString()} → ${result.afterPixels.toLocaleString()} px（半径 ${morphRadius}）。`);
   };
 
   const importCandidate = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1508,16 +1534,28 @@ export default function App() {
 
             <main className="workspace">
               {activeProposal && <div className="proposal-mode-banner" role="status"><span><strong>{activeProposal.status === 'draft' ? '正在审阅建议草稿' : activeProposal.status === 'confirmed' ? '已确认建议快照' : activeProposal.status === 'stale' ? '已过期建议快照' : '已取消建议快照'}</strong><small>{activeProposal.title} · {activeProposal.status === 'draft' ? '画布编辑只写入此提议，不改正式标注' : '当前为只读建议快照'}</small></span><button type="button" className="button button-outline" onClick={requestProposalExit} disabled={busy === 'proposal-exit'}>退出建议，查看正式标注</button></div>}
-              <div className={isComparing ? 'canvas-compare' : 'canvas-wrap'}>
-                {isComparing ? (
+              <div className={isComparing ? (compareMode === 'side' ? 'canvas-compare' : 'canvas-wrap review-wrap') : 'canvas-wrap'}>
+                {isComparing && compareMode === 'side' ? (
                   <>
                     <div className="compare-pane"><span className="compare-label">{comparisonLabel}</span><CanvasEditor imageUrl={baseUrl} width={currentProject.width} height={currentProject.height} regions={[]} activeRegionId={null} annotationKind="edit" tool="select" brushSize={brushSize} showMasks={false} onShape={() => {}} /></div>
                     <div className="compare-pane"><span className="compare-label">{selectedVersion?.name || '当前版本'}</span><CanvasEditor imageUrl={displayUrl} width={currentProject.width} height={currentProject.height} regions={regions} activeRegionId={selectedRegionId} annotationKind={annotationKind} tool="select" brushSize={brushSize} showMasks={showMasks} onShape={() => {}} /></div>
+                    <button type="button" className="compare-close" onClick={() => setIsComparing(false)}><X size={16} />退出对比</button>
                   </>
+                ) : isComparing ? (
+                  <ReviewCompare
+                    baseUrl={baseUrl}
+                    candidateUrl={displayUrl}
+                    width={currentProject.width}
+                    height={currentProject.height}
+                    mode={compareMode}
+                    validation={selectedVersion?.validation}
+                    baseLabel={comparisonLabel}
+                    candidateLabel={selectedVersion?.name || '当前版本'}
+                    onExit={() => setIsComparing(false)}
+                  />
                 ) : (
                   <CanvasEditor imageUrl={displayUrl} width={currentProject.width} height={currentProject.height} regions={regions} activeRegionId={selectedRegionId} annotationKind={annotationKind} tool={tool} brushSize={brushSize} showMasks={showMasks} onShape={proposalReadOnly ? () => {} : addShape} onToolChange={setTool} onBrushSizeChange={setBrushSize} onRegionSelect={id => { const region = regions.find(item => item.id === id); setSelectedRegionId(id); if (region) setAnnotationKind(region.kind); }} />
                 )}
-                {isComparing && <button type="button" className="compare-close" onClick={() => setIsComparing(false)}><X size={16} />退出对比</button>}
               </div>
               <div className="canvas-statusbar"><span>{formatDimensions(currentProject.width, currentProject.height)} · sRGB / 8 bit</span><span>{dirty ? '标注有未保存更改' : '本地保存'} · 原图始终保留</span></div>
               <section className="version-strip" aria-label="版本历史">
@@ -1530,7 +1568,16 @@ export default function App() {
                       <small>{version.status === 'accepted' ? '已接受' : version.status === 'candidate' ? '候选待验收' : version.status === 'rejected' ? '已退回' : '基准'}</small>
                     </button>
                   ))}
-                  <button type="button" className="compare-button" disabled={!baseUrl || selectedVersionId === comparisonVersion?.id} onClick={() => { setIsComparing(value => !value); setShowMasks(false); }}><ArrowsLeftRight size={17} />{isComparing ? '退出对比' : `对比${comparisonLabel}`}</button>
+                  <div className="compare-controls">
+                    <button type="button" className="compare-button" disabled={!baseUrl || selectedVersionId === comparisonVersion?.id} onClick={() => { setIsComparing(value => !value); setShowMasks(false); if (!isComparing) setCompareMode('side'); }}><ArrowsLeftRight size={17} />{isComparing ? '退出对比' : `对比${comparisonLabel}`}</button>
+                    {isComparing && (
+                      <div className="compare-mode-switch" role="group" aria-label="对比方式">
+                        <button type="button" className={compareMode === 'side' ? 'active' : ''} onClick={() => setCompareMode('side')} title="并排"><ArrowsLeftRight size={14} />并排</button>
+                        <button type="button" className={compareMode === 'wipe' ? 'active' : ''} onClick={() => setCompareMode('wipe')} title="wipe 滑动"><CircleHalf size={14} />Wipe</button>
+                        <button type="button" className={compareMode === 'diff' ? 'active' : ''} onClick={() => setCompareMode('diff')} title="差异热图"><Path size={14} />差异</button>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </section>
             </main>
@@ -1666,9 +1713,19 @@ export default function App() {
                       {tab === 'annotate' && <label className="field-label">区域名称<input value={selectedRegion.name} maxLength={64} onChange={event => updateRegion(selectedRegion.id, { name: event.target.value })} /></label>}
                       <label className="field-label intent-label">局部意图<textarea value={selectedRegion.intent} maxLength={2000} placeholder={selectedRegion.kind === 'edit' ? '描述要修改什么，以及哪些细节需要保留…' : '描述此区域需要保护的对象…'} onChange={event => updateRegion(selectedRegion.id, { intent: event.target.value })} /><span className="field-count">{selectedRegion.intent.length}/2000</span></label>
                       {tab === 'annotate' && selectedRegion.kind === 'edit' && <RegionContextControl region={selectedRegion} width={currentProject.width} height={currentProject.height} onChange={context => updateRegion(selectedRegion.id, { context })} />}
-                      {tab === 'annotate' && <div className="slider-field"><div className="slider-heading"><label htmlFor="feather-range">向内羽化</label><span>{selectedRegion.feather} px</span></div><input id="feather-range" type="range" min="0" max="64" value={selectedRegion.feather} onChange={event => updateRegion(selectedRegion.id, { feather: Number(event.target.value) })} /><small>服务端会在最终合成时应用；不扩大授权范围。</small></div>}
+                      {tab === 'annotate' && <div className="slider-field"><div className="slider-heading"><label htmlFor="feather-range">向内羽化</label><span>{selectedRegion.feather} px</span></div><input id="feather-range" type="range" min="0" max="64" value={selectedRegion.feather} onChange={event => updateRegion(selectedRegion.id, { feather: Number(event.target.value) })} /><small>画布即时预览有效软边；服务端合成时同样向内羽化，不扩大授权范围。</small></div>}
+                      {tab === 'annotate' && <div className="morph-tools" aria-label="选区形态学">
+                        <div className="slider-heading"><span>选区调整</span><span>半径 {morphRadius} px</span></div>
+                        <input aria-label="扩张收缩半径" type="range" min="1" max="32" value={morphRadius} onChange={event => setMorphRadius(Number(event.target.value))} />
+                        <div className="morph-actions">
+                          <button type="button" className="button button-outline morph-button" disabled={proposalReadOnly || !selectedRegion.shapes.length} onClick={() => applyMorphology('expand')} title="扩张选区"><ArrowsOut size={15} />扩张</button>
+                          <button type="button" className="button button-outline morph-button" disabled={proposalReadOnly || !selectedRegion.shapes.length} onClick={() => applyMorphology('contract')} title="收缩选区"><ArrowsIn size={15} />收缩</button>
+                          <button type="button" className="button button-outline morph-button" disabled={proposalReadOnly} onClick={() => applyMorphology('invert')} title="反选"><Path size={15} />反选</button>
+                        </div>
+                        <small>扩张 / 收缩 / 反选只改当前区域形状；不修改原图像素，也不改变 E/K 硬保护规则。</small>
+                      </div>}
                       {(tool === 'brush' || tool === 'erase') && <div className="slider-field brush-setting"><div className="slider-heading"><label htmlFor="brush-range">{tool === 'erase' ? '橡皮直径' : '画笔直径'}</label><span>{brushSize} px</span></div><input id="brush-range" type="range" min="1" max="512" value={brushSize} onChange={event => setBrushSize(Number(event.target.value))} /></div>}
-                      {tab === 'retouch' ? <div className="local-preview-section"><h3>局部预览</h3><div className="local-preview-pair"><div><RegionPreview imageUrl={baseUrl} region={selectedRegion} width={currentProject.width} height={currentProject.height} /><span>原图</span></div><div><RegionPreview imageUrl={displayUrl} region={selectedRegion} width={currentProject.width} height={currentProject.height} /><span>{selectedVersion?.status === 'source' ? '当前版本' : selectedVersion?.status === 'candidate' ? '候选' : selectedVersion?.status === 'rejected' ? '已拒绝' : '已接受'}</span></div></div><button type="button" className="text-button" onClick={() => setTab('annotate')}>精细调整选区</button></div> : <div className="mask-legend"><div><span className="region-swatch edit" /> <span><strong>编辑范围</strong><small>琥珀色区域允许修改</small></span></div><div><span className="region-swatch keep"><LockKey size={12} /></span><span><strong>保护范围</strong><small>蓝色区域优先保持不变</small></span></div></div>}
+                      {tab === 'retouch' ? <div className="local-preview-section"><h3>局部预览</h3><div className="local-preview-pair"><div><RegionPreview imageUrl={baseUrl} region={selectedRegion} width={currentProject.width} height={currentProject.height} /><span>原图</span></div><div><RegionPreview imageUrl={displayUrl} region={selectedRegion} width={currentProject.width} height={currentProject.height} /><span>{selectedVersion?.status === 'source' ? '当前版本' : selectedVersion?.status === 'candidate' ? '候选' : selectedVersion?.status === 'rejected' ? '已拒绝' : '已接受'}</span></div></div><button type="button" className="text-button" onClick={() => setTab('annotate')}>精细调整选区</button></div> : <div className="mask-legend"><div><span className="region-swatch edit" /> <span><strong>E · 编辑范围</strong><small>琥珀色区域允许修改；羽化只向内</small></span></div><div><span className="region-swatch keep"><LockKey size={12} /></span><span><strong>K · 保护范围</strong><small>蓝色斜纹区域优先保持不变</small></span></div><div><span className="region-swatch context" /> <span><strong>C · 参考范围</strong><small>虚线框仅供模型观察，不是编辑授权</small></span></div></div>}
                     </>
                   ) : <div className="empty-inline empty-region"><PaintBrush size={24} /><strong>还没有标注区域</strong><span>选中画笔、矩形或套索，直接在照片上绘制。</span><button type="button" className="text-button" onClick={() => addRegion(annotationKind)}>先创建一个{annotationKind === 'edit' ? '编辑' : '保护'}区域</button></div>}
                   <div className="panel-separator" />
@@ -1684,7 +1741,19 @@ export default function App() {
                 {selectedVersion?.status === 'candidate' ? (
                   <div className="candidate-validation">
                     <div className="validation-heading"><span>候选范围检查</span><span className={selectedVersion.validation?.passed ? 'validation-result passed' : selectedVersion.validation ? 'validation-result failed' : 'validation-result unknown'}>{selectedVersion.validation ? selectedVersion.validation.passed ? '通过' : '未通过' : '未返回'}</span></div>
-                    {selectedVersion.validation ? <div className="validation-stats"><span>保护区变化<strong>{selectedVersion.validation.protectedChangedPixels.toLocaleString()}</strong></span><span>编辑区外变化<strong>{selectedVersion.validation.outsideEditChangedPixels.toLocaleString()}</strong></span><span>发生变化像素<strong>{selectedVersion.validation.changedPixels.toLocaleString()}</strong></span><span>最大通道差<strong>{selectedVersion.validation.maxChannelDelta}</strong></span></div> : <p>服务端未提供像素验收报告，不能据此宣称范围安全。</p>}
+                    {selectedVersion.validation ? (
+                      <>
+                        <div className={`protect-zero-chip ${selectedVersion.validation.protectedChangedPixels === 0 ? 'ok' : 'bad'}`} role="status">
+                          保护区变化 <strong>{selectedVersion.validation.protectedChangedPixels.toLocaleString()} px</strong>
+                          {selectedVersion.validation.protectedChangedPixels === 0 ? ' · 硬约束 0 px' : ' · 硬约束未通过'}
+                        </div>
+                        <div className="validation-stats"><span>保护区变化<strong>{selectedVersion.validation.protectedChangedPixels.toLocaleString()}</strong></span><span>编辑区外变化<strong>{selectedVersion.validation.outsideEditChangedPixels.toLocaleString()}</strong></span><span>发生变化像素<strong>{selectedVersion.validation.changedPixels.toLocaleString()}</strong></span><span>最大通道差<strong>{selectedVersion.validation.maxChannelDelta}</strong></span></div>
+                        <div className="compare-mode-switch validation-compare-switch" role="group" aria-label="打开验收对比">
+                          <button type="button" onClick={() => { setCompareMode('wipe'); setIsComparing(true); setShowMasks(false); }} disabled={!baseUrl || selectedVersionId === comparisonVersion?.id}><CircleHalf size={14} />Wipe 对比</button>
+                          <button type="button" onClick={() => { setCompareMode('diff'); setIsComparing(true); setShowMasks(false); }} disabled={!baseUrl || selectedVersionId === comparisonVersion?.id}><Path size={14} />差异热图</button>
+                        </div>
+                      </>
+                    ) : <p>服务端未提供像素验收报告，不能据此宣称范围安全。</p>}
                     <button type="button" className="button button-dark full-button" disabled={!selectedVersion.validation?.passed || busy === 'accept' || dirty || selectedCandidateStale} onClick={() => void acceptCandidate(selectedVersion)}><CheckCircle size={17} />{busy === 'accept' ? '正在接受…' : '接受此版本'}</button>
                     <button type="button" className="button button-outline full-button" disabled={Boolean(busy) || dirty} onClick={() => void rejectCandidate(selectedVersion)}><X size={17} />{busy === 'reject' ? '正在拒绝…' : '拒绝此候选，保留历史'}</button>
                     {dirty && <span className="helper-text">有未保存标注。接受会将候选绑定到旧修订；请先放弃本地改动或重新导入候选。</span>}
