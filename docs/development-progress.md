@@ -169,6 +169,7 @@
 
 ## 2026-10-23 · 撤销重做与多点建议（SAM 延后）
 
-- **未**接入 SAM2/MobileSAM：见 [sam2-deferred.md](sam2-deferred.md)。建议工具改为多点包含/Alt 排除 + 拖框，本地边缘色彩分割。
+- **实验性 MobileSAM**：懒加载 onnxruntime-web + 钉扎 ONNX（`scripts/fetch-mobilesam.mjs`），建议工具「SAM（实验）」开关，失败回退本地多点；完整 SAM2 仍延后，见 [sam2-deferred.md](sam2-deferred.md)。
+- **Agent 选区草稿**：`POST .../propose-regions` / MCP `canvas_propose_regions` → draft only，人工确认。
 - 标注完整多步撤销/重做（⌘Z / ⇧⌘Z），覆盖画笔、套索、形态学、建议与区域增删；加载项目重置历史。
 - 验证：88 测试 + 生产构建；Tailscale `0.0.0.0:7317` 预览保持。

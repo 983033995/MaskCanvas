@@ -11,6 +11,7 @@ import { exportProposalDocument, importProposalDocument } from './proposal-docum
 import { ProjectPermissions } from './permissions.js';
 import type { ImageProcessingConfiguration } from './qwen.js';
 import { rebindDocument } from './rebinding.js';
+import { proposeRegionsFromImageBytes } from './segment-heuristics.js';
 
 export interface CreateAppOptions {
   store?: Store;
@@ -132,6 +133,69 @@ export function createApp(options: CreateAppOptions = {}) {
   });
   api.post('/projects/:id/proposals', requireLocalMutation(token), async (request, response) => {
     response.status(201).json(await proposals.create(parseProjectId(request), request.body));
+  });
+  /** Agent autonomous segment → draft proposal only (never confirms). */
+  api.post('/projects/:id/propose-regions', requireLocalMutation(token), async (request, response) => {
+    const id = parseProjectId(request);
+    const body = parseBody(z.object({
+      title: z.string().min(1).max(160).optional(),
+      goal: z.string().min(1).max(4000).optional(),
+      backend: z.enum(['qwen', 'gpt']).default('qwen'),
+      maxRegions: z.number().int().min(1).max(8).optional(),
+      hints: z.array(z.object({
+        x: z.number().finite().nonnegative(),
+        y: z.number().finite().nonnegative(),
+        label: z.union([z.literal(0), z.literal(1)]).default(1),
+      }).strict()).max(32).optional(),
+      colourTolerance: z.number().min(4).max(120).optional(),
+      edgeBarrier: z.number().min(0.05).max(0.9).optional(),
+    }).strict(), request);
+    const project = await store.getProject(id);
+    const version = project.versions.find(item => item.id === project.baseVersionId);
+    if (!version) throw new StoreError('BASE_MISSING', '缺少规范基准图', 404);
+    const bytes = await store.readAsset(id, version.asset);
+    const found = await proposeRegionsFromImageBytes(bytes, {
+      maxRegions: body.maxRegions,
+      hints: body.hints,
+      colourTolerance: body.colourTolerance,
+      edgeBarrier: body.edgeBarrier,
+    });
+    if (!found.proposals.length) {
+      response.status(200).json({
+        proposal: null,
+        regions: [],
+        engine: found.engine,
+        autoConfirmed: false,
+        generationStarted: false,
+        message: '未找到可用选区，请提供 hints 或在编辑器手工标注',
+      });
+      return;
+    }
+    const regions = found.proposals.map(item => item.region);
+    const suggestions = found.proposals.map(item => ({
+      regionId: item.region.id,
+      reason: item.reason,
+      enabled: true,
+      confidence: item.confidence,
+    }));
+    const proposal = await proposals.create(id, {
+      title: body.title ?? `Agent 选区建议（${regions.length}）`,
+      goal: body.goal ?? '根据照片启发式提出的编辑区域，须人工审阅确认后方可生成。',
+      backend: body.backend,
+      source: 'agent',
+      baseVersionId: project.baseVersionId,
+      projectRevision: project.revision,
+      regions,
+      suggestions,
+    });
+    response.status(201).json({
+      proposal,
+      regions: found.proposals,
+      engine: found.engine,
+      autoConfirmed: false,
+      generationStarted: false,
+      url: `/?project=${id}&proposal=${proposal.id}`,
+    });
   });
   api.post('/projects/:id/proposal-documents', requireLocalMutation(token), async (request, response) => {
     const body = parseBody(z.object({ document: z.unknown() }).strict(), request);

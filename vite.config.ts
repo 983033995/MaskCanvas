@@ -6,4 +6,6 @@ export default defineConfig({
   plugins: [react()],
   server: { host: '127.0.0.1', proxy: { '/api': 'http://127.0.0.1:7317' } },
   build: { outDir: '../dist', emptyOutDir: true },
+  optimizeDeps: { exclude: ['onnxruntime-web'] },
+  worker: { format: 'es' },
 });

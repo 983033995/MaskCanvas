@@ -49,7 +49,7 @@ export function createMcpServer(client = new LocalClient(), options: { allowAgen
   const allowImages = false;
   const clientIdentity = options.clientIdentity ?? process.env.MASKCANVAS_AGENT_CLIENT ?? 'client:external-agent';
   if (!['client:codex', 'client:workbuddy', 'client:qoder', 'client:external-agent'].includes(clientIdentity)) throw new Error('MASKCANVAS_AGENT_CLIENT 不是支持的客户端标识');
-  const server = new McpServer({ name: 'maskcanvas', version: '0.1.0' }, { instructions: 'MaskCanvas 与本地画布共享项目，常规交接只用 JSON 和独立图片引用。用户给图后用 canvas_open 导入，再基于规范基准创建 canvas_create_proposal 草稿，canvas_open_editor 返回建议链接让用户审阅。查询 canvas_get_proposal，只有服务端 confirmed 且 confirmation 匹配时才 canvas_submit_plan。没有 MCP 确认或创建授权工具，Agent 不可冒充用户确认。修改计划、标注、基准或处理目的地会使旧确认失效。生成返回 job ID，查询原任务，不换幂等键重发。保护优先，候选需范围与视觉验收。识别来自调用方 Agent。观察图片须用户在编辑器授予当前照片和分析客户端的项目权限，并提供匹配的grantId和destination。GPT需远端显式配置及当前图片生成授权；进程开关不替代项目权限，不静默换模型或目的地。' });
+  const server = new McpServer({ name: 'maskcanvas', version: '0.1.0' }, { instructions: 'MaskCanvas 与本地画布共享项目，常规交接只用 JSON 和独立图片引用。用户给图后用 canvas_open 导入；可用 canvas_propose_regions 让服务端启发式提出选区草稿，或手工 canvas_create_proposal，canvas_open_editor 返回建议链接让用户审阅。查询 canvas_get_proposal，只有服务端 confirmed 且 confirmation 匹配时才 canvas_submit_plan。没有 MCP 确认或创建授权工具，Agent 不可冒充用户确认。修改计划、标注、基准或处理目的地会使旧确认失效。生成返回 job ID，查询原任务，不换幂等键重发。保护优先，候选需范围与视觉验收。识别来自调用方 Agent。观察图片须用户在编辑器授予当前照片和分析客户端的项目权限，并提供匹配的grantId和destination。GPT需远端显式配置及当前图片生成授权；进程开关不替代项目权限，不静默换模型或目的地。' });
   const tool = (name: string, description: string, schema: Record<string, z.ZodType>, handler: (args: any) => Promise<any>, readOnly = false) => {
     server.registerTool(name, { description, inputSchema: schema, annotations: { readOnlyHint: readOnly, destructiveHint: false, openWorldHint: false } }, async (args) => {
       try { return await handler(args); }
@@ -69,6 +69,29 @@ export function createMcpServer(client = new LocalClient(), options: { allowAgen
   tool('canvas_get_project', '读取项目、原图坐标区域、版本和验收报告；不返回照片字节。', { projectId }, async ({ projectId }) => textResult(await client.request(p(projectId))), true);
   tool('canvas_get_annotations', '取得可直接交接的一段标注 JSON：图片引用/哈希、基准、revision、区域/保护/意图；不打包、不返回照片字节。', { projectId }, async ({ projectId }) => textResult(await client.request(`${p(projectId)}/annotations`)), true);
   tool('canvas_import_annotations', '将标注 JSON 载入同一项目供使用者检查。校验图片/基准/revision；只修改标注，不生成、不代表用户已确认计划。', { projectId, document: z.unknown() }, async ({ projectId, document }) => textResult(await client.request(`${p(projectId)}/annotations`, { document })));
+  tool('canvas_propose_regions', '基于当前基准照片的服务端边缘+色彩启发式，自动提出编辑选区并创建待审草稿。不覆盖正式标注、不确认、不生成；须用户在编辑器确认。可传 hints 正点/排除点（原图像素）。', {
+    projectId,
+    title: z.string().min(1).max(160).optional(),
+    goal: z.string().min(1).max(4000).optional(),
+    backend: z.enum(['qwen', 'gpt']).optional(),
+    maxRegions: z.number().int().min(1).max(8).optional(),
+    hints: z.array(z.object({ x: z.number().finite().nonnegative(), y: z.number().finite().nonnegative(), label: z.union([z.literal(0), z.literal(1)]).optional() })).max(32).optional(),
+  }, async ({ projectId, ...body }) => {
+    const result = await client.request(`${p(projectId)}/propose-regions`, {
+      title: body.title,
+      goal: body.goal,
+      backend: body.backend ?? 'qwen',
+      maxRegions: body.maxRegions,
+      hints: body.hints?.map((h: { x: number; y: number; label?: 0 | 1 }) => ({ x: h.x, y: h.y, label: h.label ?? 1 })),
+    });
+    return textResult({
+      ...result,
+      url: result.url ? `${client.baseUrl}${result.url}` : `${client.baseUrl}/?project=${projectId}${result.proposal ? `&proposal=${result.proposal.id}` : ''}`,
+      autoConfirmed: false,
+      generationStarted: false,
+    });
+  });
+
   tool('canvas_create_proposal', '创建待用户确认的独立修图建议，不覆盖正式标注、不生成。范围按规范基准原图坐标，keep全部强保护，每个edit须一条建议。', {
     projectId, title: z.string().min(1).max(160), goal: z.string().min(1).max(4000),
     backend: z.enum(['qwen', 'gpt']), baseVersionId: z.string(), projectRevision: revision,

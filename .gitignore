@@ -24,3 +24,7 @@ projects/
 
 # Design exploration output (AI-generated mockup studies)
 design/generated/
+
+# Large optional MobileSAM / ORT assets (fetch via scripts/fetch-mobilesam.mjs)
+app/public/models/
+app/public/ort/

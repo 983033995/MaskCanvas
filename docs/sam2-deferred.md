@@ -1,20 +1,28 @@
-# SAM2 / MobileSAM 延后说明
+# SAM2 / MobileSAM 说明
 
 日期：2026-10-23。分支：`ux/canvas-workbench`。
 
-## 结论
+## 本轮结论
 
-本轮**未**接入真实 SAM2 或 MobileSAM ONNX。建议工具改为**多点正/负提示**的本地边缘+色彩分割（SAM 式交互，无神经网络权重）。
+已接入**实验性**浏览器 MobileSAM（`onnxruntime-web` + 本地 ONNX），默认关闭：
 
-## 为何本轮不装
+- 建议工具勾选 **「SAM（实验）」** 后懒加载 `/models/mobilesam/*.onnx` 与 `/ort/` WASM。
+- 编码一次 / 每次提示点解码；OOM、缺权重、推理失败时**自动回退**本地多点边缘+色彩启发式。
+- 权重 **不进 git**（约 45 MB）；用 `node scripts/fetch-mobilesam.mjs` 拉取 comicbox 镜像（encoder/decoder sha256 已钉扎）。
 
-1. **运行环境**：云盒当时可用内存约 3.4 GB（已用约 12 GB）。在同一机器上并行 Vite/测试/服务时，再拉取 onnxruntime-web WASM + 编码器编译，稳定性与开发反馈循环差。
-2. **体积与首载**：可用的浏览器 MobileSAM 约 45 MB（encoder≈28 MB + decoder≈16 MB）；SAM2 tiny 更大。精修工作台默认路径不应强制首次下载该体积；需要完整的进度、OPFS 缓存与 Worker，超出本轮可验证范围。
-3. **验收约束**：项目前端交互验收依赖用户指定浏览器，不能用 Playwright 冒充；本轮无法在盒内完成真实照片点击分割的视觉验收。
-4. **许可与集成**：MobileSAM Apache-2.0 / 部分 ONNX 导出 MIT 可用，但要正确处理输入归一化、多 mask 头选择与坐标映射，仓促接入容易交付“能跑但选不准则”的假 SAM。
+完整 **SAM2** 仍未接入（体积与验收成本更大）。
 
-## 下一步（若要接）
+## 仍保留启发式的原因
 
-推荐路径：`onnxruntime-web` + Hugging Face `comicbox/mobilesam-onnx` encoder + Acly `sam_mask_decoder_multi.onnx`，Worker 内 encode-once / decode-per-click，模型放 `public/models/mobilesam/`，建议工具增加“SAM（实验）”开关，默认仍走本地多点。
+1. 默认路径必须零下载、可离线；SAM 仅实验开关。
+2. 盒内可用内存常约 3 GB 级，WASM 编码可能 OOM —— 回退路径是产品要求而非权宜。
+3. 前端交互验收仍依赖用户浏览器；本轮以单元/API 测试 + 本地 ORT 冒烟验证张量通路。
 
-参考：https://huggingface.co/DotoPototo/paint-models 、https://github.com/karlorz/sam-web
+## Agent 选区
+
+服务端 `POST /api/projects/:id/propose-regions` 与 MCP `canvas_propose_regions` 用**同一套启发式**从基准图提出多边形，并写入 **draft** 提议（`autoConfirmed: false`）。**不会**替用户确认或开生成。
+
+## 参考
+
+- https://huggingface.co/comicbox/mobilesam-onnx  
+- https://github.com/ChaoningZhang/MobileSAM  

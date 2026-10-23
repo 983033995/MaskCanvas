@@ -4,6 +4,7 @@ import { imageGeometry, sourcePoint, screenPoint, type View } from './canvas-geo
 import { renderMasks, drawContextRect, EDIT_COLOR } from './canvas-render';
 import { buildEdgeMap, snapToEdge, didSnapToEdge, traceEdge, type EdgeMap } from './magnetic-lasso';
 import { suggestRegionFromImageData, suggestBoxFromImageData, suggestPromptsFromImageData, type PromptPoint } from './region-suggest';
+import { ensureMobileSam, getMobileSamState, resetMobileSamEmbedding, suggestWithMobileSam } from './mobilesam';
 
 export type Tool = 'select' | 'brush' | 'erase' | 'rect' | 'polygon' | 'magnetic' | 'lasso' | 'move' | 'suggest';
 export type AnnotationKind = 'edit' | 'keep';
@@ -101,6 +102,10 @@ export function CanvasEditor(props: CanvasEditorProps) {
   const [suggestPrompts, setSuggestPrompts] = useState<PromptPoint[]>([]);
   const suggestPromptsRef = useRef<PromptPoint[]>([]);
   suggestPromptsRef.current = suggestPrompts;
+  const [useSam, setUseSam] = useState(false);
+  const useSamRef = useRef(false); useSamRef.current = useSam;
+
+  useEffect(() => { resetMobileSamEmbedding(); }, [props.imageUrl]);
   const optionsRef = useRef({ snapRadius, contrast, snapStrength }); optionsRef.current = { snapRadius, contrast, snapStrength };
   const snapOpts = () => {
     const strength = optionsRef.current.snapStrength / 100;
@@ -336,8 +341,11 @@ export function CanvasEditor(props: CanvasEditorProps) {
     const p = propsRef.current;
     const image = imageRef.current;
     if (!image) { setSuggestStatus('照片尚未载入。'); return; }
-    setSuggestStatus('正在分析边缘与色彩…');
-    try {
+    const prompts = promptsOverride ?? suggestPromptsRef.current;
+    const wantSam = useSamRef.current && prompts.some(pt => pt.label === 1) && !(box && Math.abs(box.width) >= 6 && Math.abs(box.height) >= 6);
+    setSuggestStatus(wantSam ? 'MobileSAM（实验）分析中…' : '正在分析边缘与色彩…');
+
+    const applyHeuristic = () => {
       const maxSide = 1280;
       const factor = Math.min(1, maxSide / Math.max(p.width, p.height));
       const w = Math.max(1, Math.round(p.width * factor)), h = Math.max(1, Math.round(p.height * factor));
@@ -353,7 +361,6 @@ export function CanvasEditor(props: CanvasEditorProps) {
         closeRadius: 1,
         negativeRadius: Math.max(6, Math.round(10 / Math.max(0.001, geometry().scale))),
       };
-      const prompts = promptsOverride ?? suggestPromptsRef.current;
       let result = null as ReturnType<typeof suggestPromptsFromImageData>;
       if (prompts.length >= 1 && !(box && Math.abs(box.width) >= 6 && Math.abs(box.height) >= 6)) {
         result = suggestPromptsFromImageData(imageData, prompts, p.width, p.height, opts);
@@ -362,16 +369,49 @@ export function CanvasEditor(props: CanvasEditorProps) {
       } else {
         result = suggestRegionFromImageData(imageData, seed, p.width, p.height, opts);
       }
-      if (!result) { setSuggestStatus('未找到可用区域。加点（含）或 Alt+点（排除）后再试。'); return; }
+      return result;
+    };
+
+    const finish = (result: NonNullable<ReturnType<typeof suggestPromptsFromImageData>>, engine: string) => {
       const replaceLast = prompts.length > 1 || Boolean(box);
       p.onShape(p.activeRegionId, p.annotationKind, result.shape, { replaceLast });
       const pos = prompts.filter((pt: PromptPoint) => pt.label === 1).length;
       const neg = prompts.filter((pt: PromptPoint) => pt.label === 0).length;
       const bounds = [result.boundedByEdge && '边缘', result.boundedByColour && '色彩', result.boundedBySize && '面积', result.boundedByBox && '框选'].filter(Boolean).join(' · ');
-      setSuggestStatus(`已建议 ${result.pixels.toLocaleString()} px · 含${pos}/除${neg}${bounds ? ` · 止于${bounds}` : ''} · 继续点击精修`);
-    } catch {
-      setSuggestStatus('建议失败，可改用套索或画笔。');
-    }
+      setSuggestStatus(`${engine} · ${result.pixels.toLocaleString()} px · 含${pos}/除${neg}${bounds ? ` · 止于${bounds}` : ''} · 继续点击精修`);
+    };
+
+    void (async () => {
+      try {
+        if (wantSam) {
+          const maxSide = 1024;
+          const factor = Math.min(1, maxSide / Math.max(p.width, p.height));
+          const w = Math.max(1, Math.round(p.width * factor)), h = Math.max(1, Math.round(p.height * factor));
+          const canvas = document.createElement('canvas'); canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+          ctx.drawImage(image, 0, 0, w, h);
+          const imageData = ctx.getImageData(0, 0, w, h);
+          const scaledPrompts = prompts.map(pt => ({ x: pt.x * factor, y: pt.y * factor, label: pt.label }));
+          const sam = await suggestWithMobileSam(imageData.data, w, h, scaledPrompts, p.imageUrl);
+          if (sam && sam.shape.type === 'polygon') {
+            const outX = p.width / w, outY = p.height / h;
+            const mapped = {
+              ...sam,
+              shape: { type: 'polygon' as const, points: sam.shape.points.map(pt => ({ x: pt.x * outX, y: pt.y * outY })) },
+            };
+            finish(mapped, 'MobileSAM');
+            return;
+          }
+          const st = getMobileSamState();
+          setSuggestStatus(`${st.detail || 'MobileSAM 不可用'} · 回退本地多点…`);
+        }
+        const result = applyHeuristic();
+        if (!result) { setSuggestStatus('未找到可用区域。加点（含）或 Alt+点（排除）后再试。'); return; }
+        finish(result, wantSam ? '本地多点（回退）' : '本地多点');
+      } catch {
+        setSuggestStatus('建议失败，可改用套索或画笔。');
+      }
+    })();
   };
 
   const onPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -517,7 +557,7 @@ export function CanvasEditor(props: CanvasEditorProps) {
       <span className="zoom-value">{zoomLabel === '适合' ? fitLabel : zoomLabel}</span>
       <button type="button" className={zoomLabel === '100%' ? 'zoom-fit is-current' : 'zoom-fit'} onClick={() => applyZoom(1)}>100%</button><button type="button" aria-label="放大" onClick={() => applyZoom(geometry().scale * 1.2)}>＋</button>
     </div>}
-    {props.imageUrl && isSuggest && <div className="canvas-tool-options" aria-label="点选建议"><strong>多点建议</strong><span>含 {suggestPrompts.filter((p: PromptPoint) => p.label === 1).length} · 除 {suggestPrompts.filter((p: PromptPoint) => p.label === 0).length}</span><button type="button" className="text-button" onClick={() => { setSuggestPrompts([]); setSuggestStatus('已清除提示点'); }}>清除点</button><small>点击=包含 · Alt+点击=排除 · 拖框=范围 · 非 SAM2</small></div>}
+    {props.imageUrl && isSuggest && <div className="canvas-tool-options" aria-label="点选建议"><strong>多点建议</strong><span>含 {suggestPrompts.filter((p: PromptPoint) => p.label === 1).length} · 除 {suggestPrompts.filter((p: PromptPoint) => p.label === 0).length}</span><label><input type="checkbox" checked={useSam} onChange={async (e) => { const on = e.target.checked; setUseSam(on); if (on) { setSuggestStatus('正在准备 MobileSAM…'); const ok = await ensureMobileSam(); const st = getMobileSamState(); setSuggestStatus(ok ? 'MobileSAM 已启用（实验）· 首次点击将编码' : (st.detail || 'MobileSAM 不可用，仍用本地多点')); if (!ok) setUseSam(false); } else { setSuggestStatus('已关闭 MobileSAM · 本地多点'); } }} /> SAM（实验）</label><button type="button" className="text-button" onClick={() => { setSuggestPrompts([]); setSuggestStatus('已清除提示点'); }}>清除点</button><small>点击=包含 · Alt+点击=排除 · 拖框=范围 · SAM 失败自动回退</small></div>}
     {(edgeError || suggestStatus || isLasso || isSuggest) && <div className="canvas-hint" role="status">{edgeError || suggestStatus || (isSuggest ? '点击或拖框生成建议选区 · 画笔/形态学精修 · Esc 取消' : props.tool === 'lasso' ? '按住拖画，松开闭合 · 空格平移 · Esc 取消' : props.tool === 'polygon' ? (lassoCount ? `已设 ${lassoCount} 个锚点 · 点击加点 · Backspace 回退 · Enter/双击闭合 · 空格平移` : '点击放置锚点 · Enter / 双击闭合 · 空格平移') : lassoCount ? `已设 ${lassoCount} 个锚点 · 近强边缘才吸附 · 点击锁定 · Alt 自由 · Backspace 回退 · Enter/双击闭合 · 空格平移` : '点击起点 · 靠近清晰边缘才会吸附 · Alt 关闭吸附 · Enter/双击闭合')}</div>}
   </div>;
 }

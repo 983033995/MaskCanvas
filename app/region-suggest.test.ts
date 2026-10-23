@@ -66,3 +66,22 @@ test('multi-prompt positives union and negatives carve', () => {
   assert.ok(onlyPos);
   assert.ok(withNeg!.pixels < onlyPos!.pixels, `neg should carve: ${withNeg!.pixels} vs ${onlyPos!.pixels}`);
 });
+
+
+test('multi-prompt uses per-positive local colour (two blobs)', () => {
+  const data = paint(100, 60, (x) => {
+    if (x < 35) return [210, 40, 40];
+    if (x > 65) return [40, 40, 210];
+    return [90, 90, 90];
+  });
+  const leftOnly = suggestRegionFromPrompts(data, 100, 60, [{ x: 12, y: 30, label: 1 }], { edgeBarrier: 0.25, colourTolerance: 45, maxFraction: 0.7 });
+  const both = suggestRegionFromPrompts(data, 100, 60, [
+    { x: 12, y: 30, label: 1 },
+    { x: 85, y: 30, label: 1 },
+  ], { edgeBarrier: 0.25, colourTolerance: 45, maxFraction: 0.7 });
+  assert.ok(leftOnly && both);
+  // Per-seed local colour should pick up the second blob; mask union grows even if
+  // maskToPolygon only traces the first connected component for the shape outline.
+  assert.ok(both!.pixels > leftOnly!.pixels * 1.5, `expected union of both blobs: left=${leftOnly!.pixels} both=${both!.pixels}`);
+  assert.ok(both!.pixels > 2500, `expected ~two 35×60 blobs: ${both!.pixels}`);
+});

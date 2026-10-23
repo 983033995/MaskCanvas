@@ -133,3 +133,35 @@ Full SAM2 / MobileSAM ONNX **not** shipped this pass. Reasons and next-step plan
 - `npm test` 88 pass
 - `npm run build` OK
 - Preview restarted: `MASKCANVAS_BIND=0.0.0.0` `MASKCANVAS_ALLOW_REMOTE_BROWSER=1` on `:7317`
+
+
+## Continue pass — MobileSAM lazy + agent propose-regions (2026-10-23 later)
+
+### 1. MobileSAM（实验）
+
+- Pinned ONNX from `comicbox/mobilesam-onnx` (encoder `580f5fb6…`, decoder `93915fc7…`).
+- Lazy `onnxruntime-web` path in `app/mobilesam.ts`: encode-once / decode-per-prompt; HWC `[1024,1024,3]` ImageNet norm.
+- Suggest tool checkbox **SAM（实验）**; OOM/missing weights/runtime errors fall back to local multi-point heuristics.
+- Assets **not committed**: `node scripts/fetch-mobilesam.mjs` → `app/public/models/mobilesam/` + `app/public/ort/`.
+- Local ORT WASM smoke: encode ~4s, decode OK on synthetic split image.
+- Docs: `docs/sam2-deferred.md` updated (honest: experimental shipped, SAM2 still deferred).
+
+### 2. Multi-point heuristic quality
+
+- `suggestRegionFromPrompts` now floods **per-positive with local colour**, then unions + carves negatives (no global average washout).
+
+### 3. Agent autonomous segment → draft only
+
+- `POST /api/projects/:id/propose-regions` (`server/segment-heuristics.ts`) → `ProposalStore.create` draft.
+- MCP `canvas_propose_regions` — returns `autoConfirmed: false`, `generationStarted: false`; does not mutate official annotations.
+- Human confirm still only via editor confirm endpoint (no MCP confirm tool).
+
+### 4. Preview / tests
+
+- Preview: `MASKCANVAS_BIND=0.0.0.0 MASKCANVAS_ALLOW_REMOTE_BROWSER=1` on `0.0.0.0:7317`.
+- Models served: `/models/mobilesam/*` 200, `/ort/*.wasm` 200.
+- `npm test`: **92 pass / 0 fail**. `npm run build` green.
+
+### 5. Commit
+
+- Branch `ux/canvas-workbench`; no push. Large ONNX/WASM gitignored.

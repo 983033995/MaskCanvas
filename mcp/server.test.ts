@@ -22,6 +22,7 @@ test('MCP uses real stdio transport and shared local API; images default disable
   const tools = await client.listTools();
   assert.ok(tools.tools.some(tool => tool.name === 'canvas_submit_qwen'));
   assert.ok(tools.tools.some(tool => tool.name === 'canvas_set_regions'));
+  assert.ok(tools.tools.some(tool => tool.name === 'canvas_propose_regions'));
   const capabilities = await client.callTool({ name: 'canvas_capabilities', arguments: {} });
   assert.equal(capabilities.isError, undefined);
   const data = JSON.parse((capabilities.content as {text:string}[])[0].text);
@@ -57,6 +58,15 @@ test('MCP uses real stdio transport and shared local API; images default disable
   const view = JSON.parse((opened.content as {text:string}[])[0].text);
   assert.equal(view.url, `${url}/?project=${created.id}`); assert.equal(view.generationStarted, false);
   assert.ok(!tools.tools.some(tool => /confirm/.test(tool.name)));
+  const autoSeg = await client.callTool({ name: 'canvas_propose_regions', arguments: { projectId: created.id, maxRegions: 2, title: '自动选区草稿' } });
+  assert.equal(autoSeg.isError, undefined);
+  const autoDoc = JSON.parse((autoSeg.content as {text:string}[])[0].text);
+  assert.equal(autoDoc.autoConfirmed, false);
+  assert.equal(autoDoc.generationStarted, false);
+  if (autoDoc.proposal) assert.equal(autoDoc.proposal.status, 'draft');
+  const afterSeg = await (await fetch(`${url}/api/projects/${created.id}`)).json();
+  assert.equal(afterSeg.revision, after.revision, 'propose-regions draft must not bump project revision / annotations');
+  assert.deepEqual(afterSeg.regions, after.regions, 'propose-regions must not replace official annotations');
   const suggested = await client.callTool({ name: 'canvas_create_proposal', arguments: {
     projectId: after.id, title: '衣物自然精修', goal: '只改善衣物小块区域', backend: 'qwen',
     projectRevision: after.revision, baseVersionId: after.baseVersionId, regions: document.regions,

@@ -264,25 +264,15 @@ export function suggestRegionFromPrompts(
   const negatives = prompts.filter(p => p.label === 0);
   if (!positives.length) return null;
 
-  // Seed colour = median of positive samples.
-  const colours = positives.map(p => sampleRgb(
-    rgba, width,
-    Math.max(0, Math.min(width - 1, Math.round(p.x))),
-    Math.max(0, Math.min(height - 1, Math.round(p.y))),
-  ));
-  const seedColour: [number, number, number] = [
-    Math.round(colours.reduce((s, c) => s + c[0], 0) / colours.length),
-    Math.round(colours.reduce((s, c) => s + c[1], 0) / colours.length),
-    Math.round(colours.reduce((s, c) => s + c[2], 0) / colours.length),
-  ];
-
   const edgeBarrier = options.edgeBarrier ?? 0.2;
   const colourTolerance = options.colourTolerance ?? 42;
   const maxFraction = options.maxFraction ?? 0.4;
   const seedRadius = Math.max(0, Math.round(options.seedRadius ?? 2));
   const closeRadius = Math.max(0, Math.round(options.closeRadius ?? 1));
   const negativeRadius = Math.max(1, Math.round(options.negativeRadius ?? 8));
-  const maxPixels = Math.max(16, Math.floor(width * height * maxFraction));
+  // Cap each positive flood, then union — avoids one average colour washing out multi-object prompts.
+  const maxPixelsPerSeed = Math.max(16, Math.floor(width * height * Math.min(maxFraction, 0.35)));
+  const maxPixelsTotal = Math.max(16, Math.floor(width * height * maxFraction));
   const map = buildEdgeMap(rgba, width, height);
 
   const blocked = createMask(width, height, 0);
@@ -297,51 +287,69 @@ export function suggestRegionFromPrompts(
   }
 
   const mask = createMask(width, height, 0);
-  const queue: number[] = [];
   let boundedByEdge = false, boundedByColour = false, boundedBySize = false;
-
-  const trySeed = (x: number, y: number) => {
-    if (x < 0 || y < 0 || x >= width || y >= height) return;
-    if (!inBox(x, y, options.clipBox)) return;
-    const id = y * width + x;
-    if (mask[id] || blocked[id]) return;
-    mask[id] = 255;
-    queue.push(id);
-  };
+  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const;
 
   for (const p of positives) {
     const sx = Math.max(0, Math.min(width - 1, Math.round(p.x)));
     const sy = Math.max(0, Math.min(height - 1, Math.round(p.y)));
+    if (blocked[sy * width + sx]) continue;
+    // Local colour from a small disc around this positive — not a global average.
+    const local: [number, number, number][] = [];
+    for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+      const x = sx + dx, y = sy + dy;
+      if (x < 0 || y < 0 || x >= width || y >= height) continue;
+      local.push(sampleRgb(rgba, width, x, y));
+    }
+    const seedColour: [number, number, number] = local.length
+      ? [
+          Math.round(local.reduce((s, c) => s + c[0], 0) / local.length),
+          Math.round(local.reduce((s, c) => s + c[1], 0) / local.length),
+          Math.round(local.reduce((s, c) => s + c[2], 0) / local.length),
+        ]
+      : sampleRgb(rgba, width, sx, sy);
+
+    const queue: number[] = [];
+    const trySeed = (x: number, y: number) => {
+      if (x < 0 || y < 0 || x >= width || y >= height) return;
+      if (!inBox(x, y, options.clipBox)) return;
+      const id = y * width + x;
+      if (mask[id] || blocked[id]) return;
+      mask[id] = 255;
+      queue.push(id);
+    };
     for (let dy = -seedRadius; dy <= seedRadius; dy++) for (let dx = -seedRadius; dx <= seedRadius; dx++) {
       if (dx * dx + dy * dy <= seedRadius * seedRadius) trySeed(sx + dx, sy + dy);
     }
     trySeed(sx, sy);
-  }
-  if (!queue.length) return null;
 
-  let head = 0;
-  const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const;
-  while (head < queue.length) {
-    if (queue.length > maxPixels) { boundedBySize = true; break; }
-    const id = queue[head++];
-    const x = id % width, y = Math.floor(id / width);
-    for (const [dx, dy] of dirs) {
-      const nx = x + dx, ny = y + dy;
-      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-      if (!inBox(nx, ny, options.clipBox)) continue;
-      const nid = ny * width + nx;
-      if (mask[nid] || blocked[nid]) continue;
-      const barrier = (dx && dy) ? edgeBarrier * 0.92 : edgeBarrier;
-      if (map.strength[nid] >= barrier) { boundedByEdge = true; continue; }
-      if (colourDistance(seedColour, sampleRgb(rgba, width, nx, ny)) > colourTolerance) { boundedByColour = true; continue; }
-      mask[nid] = 255;
-      queue.push(nid);
+    let head = 0;
+    let filled = 0;
+    let totalFilled = countMaskPixels(mask) - queue.length; // pixels already committed before this seed's queue
+    while (head < queue.length) {
+      if (filled > maxPixelsPerSeed || totalFilled + queue.length > maxPixelsTotal) { boundedBySize = true; break; }
+      const id = queue[head++];
+      filled++;
+      const x = id % width, y = Math.floor(id / width);
+      for (const [dx, dy] of dirs) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+        if (!inBox(nx, ny, options.clipBox)) continue;
+        const nid = ny * width + nx;
+        if (mask[nid] || blocked[nid]) continue;
+        const barrier = (dx && dy) ? edgeBarrier * 0.9 : edgeBarrier;
+        // Local adaptive barrier: stronger edges near seed require clearer walls.
+        const localBarrier = barrier * (1 - Math.min(0.25, map.strength[sy * width + sx] * 0.3));
+        if (map.strength[nid] >= localBarrier) { boundedByEdge = true; continue; }
+        if (colourDistance(seedColour, sampleRgb(rgba, width, nx, ny)) > colourTolerance) { boundedByColour = true; continue; }
+        mask[nid] = 255;
+        queue.push(nid);
+      }
     }
   }
 
   let cleaned = mask;
   if (closeRadius > 0) cleaned = erodeMask(dilateMask(mask, width, height, closeRadius), width, height, closeRadius);
-  // Re-carve negatives after close so soft-close cannot bleed into excludes.
   for (let i = 0; i < cleaned.length; i++) if (blocked[i]) cleaned[i] = 0;
   for (const p of positives) {
     const sx = Math.max(0, Math.min(width - 1, Math.round(p.x)));
