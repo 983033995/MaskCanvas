@@ -143,6 +143,30 @@ export function cropForMask(mask: Uint8Array, width: number, height: number, con
   return { left, top, width: w, height: h, paddedWidth, paddedHeight };
 }
 
+
+/**
+ * CLIProxyAPIGPTImage2 with size_hint=1K often returns a native square (observed 1254²)
+ * rather than the exact 1024 padded input canvas. Uniform high-quality resize back to the
+ * expected padded size preserves spatial correspondence with the top-left crop extract and
+ * protect masks. Center-crop would shift content relative to the pad; anisotropic stretch
+ * is refused. Qwen keeps a strict size match (no silent rescale).
+ */
+export async function alignGptOutputToPaddedSize(image: Buffer, paddedWidth: number, paddedHeight: number): Promise<Buffer> {
+  const meta = await sharp(image, { limitInputPixels: 40_000_000 }).metadata();
+  if (!meta.width || !meta.height) throw new Error('GPT 产物缺少尺寸元数据');
+  if (meta.width === paddedWidth && meta.height === paddedHeight) return image;
+  const srcAspect = meta.width / meta.height;
+  const dstAspect = paddedWidth / paddedHeight;
+  if (Math.abs(srcAspect - dstAspect) > 0.02) {
+    throw new Error(`GPT 产物宽高比与上下文不一致（${meta.width}×${meta.height} → ${paddedWidth}×${paddedHeight}），拒绝各向异性拉伸`);
+  }
+  // fit:'fill' is safe here because aspects already match within tolerance; Lanczos keeps edges usable for feather composite.
+  return sharp(image, { limitInputPixels: 40_000_000 })
+    .resize(paddedWidth, paddedHeight, { fit: 'fill', kernel: 'lanczos3' })
+    .png()
+    .toBuffer();
+}
+
 export class QwenJobs {
   private records: RecordJob[] = [];
   private readonly host: string | undefined;
@@ -575,18 +599,26 @@ export class QwenJobs {
     const response = await fetch(`${this.host}/view?${params}`, { redirect: 'error', signal: AbortSignal.timeout(60_000) });
     if (!response.ok) throw new Error(`产物获取失败 HTTP ${response.status}`);
     const image = Buffer.from(await response.arrayBuffer());
-    const meta = await sharp(image, { limitInputPixels: 1_600_000 }).metadata();
     const c = job.crop;
+    let aligned: Buffer;
+    try {
+      aligned = (job.backend ?? 'qwen') === 'gpt'
+        ? await alignGptOutputToPaddedSize(image, c.paddedWidth, c.paddedHeight)
+        : image;
+    } catch (error) {
+      job.status = 'failed'; job.error = error instanceof Error ? error.message : 'GPT 产物尺寸无法对齐'; return;
+    }
+    const meta = await sharp(aligned, { limitInputPixels: 40_000_000 }).metadata();
     if (meta.width !== c.paddedWidth || meta.height !== c.paddedHeight) {
       job.status = 'failed'; job.error = '模型返回尺寸与上下文不一致，停止拼回，未自动拉伸'; return;
     }
     const current = await this.store.getProject(job.projectId);
     // A previous process may have committed the candidate just before jobs.json save.
-    const name = `Qwen · ${job.id}`;
+    const name = `${(job.backend ?? 'qwen') === 'gpt' ? 'GPT Image' : 'Qwen'} · ${job.id}`;
     const candidateId = `candidate-${job.id}`;
     const previous = current.versions.find((v) => v.id === candidateId);
     if (previous) { job.versionId = previous.id; job.status = 'candidate'; delete job.error; return; }
-    const cropImage = await sharp(image).extract({ left: 0, top: 0, width: c.width, height: c.height }).png().toBuffer();
+    const cropImage = await sharp(aligned).extract({ left: 0, top: 0, width: c.width, height: c.height }).png().toBuffer();
     const base = current.versions.find((v) => v.id === job.baseVersionId);
     if (!base) throw new Error('基准版本丢失');
     const fullImage = await sharp(this.store.assetPath(job.projectId, base.asset)).composite([{ input: cropImage, left: c.left, top: c.top }]).png().toBuffer();
@@ -632,9 +664,22 @@ export class QwenJobs {
     const crop = step.crop;
     const directory = this.planDirectory(job);
     const outputFile = `step-${index}-output.png`;
+    // Keep the raw provider bytes for forensics even when we later resize GPT outputs.
     await this.atomicWrite(path.join(directory, outputFile), image);
     step.outputFile = outputFile;
-    const meta = await sharp(image, { limitInputPixels: 1_600_000 }).metadata();
+    let aligned: Buffer;
+    try {
+      aligned = (job.backend ?? 'qwen') === 'gpt'
+        ? await alignGptOutputToPaddedSize(image, crop.paddedWidth, crop.paddedHeight)
+        : image;
+    } catch (error) {
+      step.status = 'failed'; job.status = 'failed';
+      job.error = `计划第 ${index + 1} 步${error instanceof Error ? error.message : '产物尺寸无法对齐'}；已保留原始产物`; return;
+    }
+    if ((job.backend ?? 'qwen') === 'gpt' && aligned !== image) {
+      await this.atomicWrite(path.join(directory, `step-${index}-output-aligned.png`), aligned);
+    }
+    const meta = await sharp(aligned, { limitInputPixels: 40_000_000 }).metadata();
     if (meta.width !== crop.paddedWidth || meta.height !== crop.paddedHeight) {
       step.status = 'failed'; job.status = 'failed'; job.error = `计划第 ${index + 1} 步图像尺寸与上下文不一致；已保留原始产物且未拉伸`; return;
     }
@@ -642,7 +687,7 @@ export class QwenJobs {
       ? this.store.assetPath(job.projectId, (await this.store.getProject(job.projectId)).versions.find((version) => version.id === job.baseVersionId)!.asset)
       : path.join(directory, `step-${index - 1}-composite.png`);
     const basePng = await readFile(inputPath);
-    const cropImage = await sharp(image).extract({ left: 0, top: 0, width: crop.width, height: crop.height }).png().toBuffer();
+    const cropImage = await sharp(aligned).extract({ left: 0, top: 0, width: crop.width, height: crop.height }).png().toBuffer();
     const candidatePng = await sharp(basePng, { limitInputPixels: 40_000_000 }).composite([{ input: cropImage, left: crop.left, top: crop.top }]).png().toBuffer();
     const intermediate = await this.store.compositeCandidatePreview(job.projectId, basePng, candidatePng, job.regions, [step.regionId]);
     await this.atomicWrite(path.join(directory, `step-${index}-composite.png`), intermediate);

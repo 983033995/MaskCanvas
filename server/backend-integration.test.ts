@@ -164,8 +164,9 @@ it('rechecks a generation grant before execution and submits no prompt after rev
   assert.equal(fixture.mock.uploads.length, 0);
 });
 
-it('rejects a GPT output with the wrong context size without scaling or importing a candidate', async t => {
-  const fixture = await createFixture({ outputSize: 512 });
+it('aligns GPT provider 1K native square output (e.g. 1254) back to the 1024 padded context without breaking protect masks', async t => {
+  // CLIProxyAPIGPTImage2 size_hint=1K has been observed returning 1254² for a 1024 padded input.
+  const fixture = await createFixture({ outputSize: 1254 });
   t.after(() => { fixture.jobs.close(); fixture.mock.close(); });
   const grant = await fixture.permissions.create(fixture.project.id, {
     baseVersionId: fixture.project.baseVersionId, purpose: 'generation', backend: 'gpt',
@@ -179,13 +180,40 @@ it('rejects a GPT output with the wrong context size without scaling or importin
   assert.equal(fixture.mock.prompts.length, 1);
   fixture.mock.complete(0);
   await fixture.jobs.tick();
-  const failed = await fixture.jobs.get(job.id);
-  assert.equal(failed.status, 'failed');
-  assert.match(failed.error ?? '', /尺寸与上下文不一致/);
-  assert.equal((await fixture.store.getProject(fixture.project.id)).versions.length, 1, 'wrong-sized output must not become a candidate');
+  const completed = await fixture.jobs.get(job.id);
+  assert.equal(completed.status, 'candidate', completed.error ?? 'expected resize alignment to succeed');
+  const updated = await fixture.store.getProject(fixture.project.id);
+  const candidate = updated.versions.find(version => version.id === completed.versionId)!;
+  assert.equal(candidate.validation?.passed, true);
+  assert.equal(candidate.validation?.protectedChangedPixels, 0);
+  assert.equal(candidate.validation?.outsideEditChangedPixels, 0);
+  const pixels = await sharp(await fixture.store.readAsset(fixture.project.id, candidate.asset)).raw().toBuffer({ resolveWithObject: true });
+  const pixel = (x: number, y: number) => [...pixels.data.subarray((y * 64 + x) * 4, (y * 64 + x) * 4 + 3)];
+  assert.deepEqual(pixel(10, 10), [170, 170, 170], 'keep pixels remain source-exact after GPT resize alignment');
+  assert.deepEqual(pixel(30, 30), [170, 170, 170], 'pixels outside the confirmed edit remain source-exact');
 });
 
-async function createFixture(options: { remoteGenerationEnabled?: boolean; outputSize?: number } = {}) {
+it('rejects GPT output with a mismatched aspect ratio instead of anisotropic stretch', async t => {
+  const fixture = await createFixture({ outputSize: 512, outputHeight: 768 });
+  t.after(() => { fixture.jobs.close(); fixture.mock.close(); });
+  const grant = await fixture.permissions.create(fixture.project.id, {
+    baseVersionId: fixture.project.baseVersionId, purpose: 'generation', backend: 'gpt',
+    destination: 'https://images.example.test',
+  });
+  const job = await fixture.jobs.submitPlan(fixture.project.id, {
+    proposalId: fixture.proposal.id, confirmationId: fixture.confirmation.confirmation!.id,
+    idempotencyKey: crypto.randomUUID(), grantId: grant.id,
+  });
+  await fixture.jobs.tick();
+  fixture.mock.complete(0);
+  await fixture.jobs.tick();
+  const failed = await fixture.jobs.get(job.id);
+  assert.equal(failed.status, 'failed');
+  assert.match(failed.error ?? '', /宽高比|尺寸/);
+  assert.equal((await fixture.store.getProject(fixture.project.id)).versions.length, 1, 'bad-aspect GPT output must not become a candidate');
+});
+
+async function createFixture(options: { remoteGenerationEnabled?: boolean; outputSize?: number; outputHeight?: number } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'maskcanvas-backend-integration-'));
   roots.push(root);
   const store = createStore({ dataDir: root });
@@ -210,7 +238,8 @@ async function createFixture(options: { remoteGenerationEnabled?: boolean; outpu
   const confirmation = await proposals.confirm(project.id, proposal.id, { revision: proposal.revision, projectRevision: project.revision });
   const permissions = new ProjectPermissions(store);
   const outputSize = options.outputSize ?? 1024;
-  const output = await sharp({ create: { width: outputSize, height: outputSize, channels: 4, background: '#dc5522' } }).png().toBuffer();
+  const outputHeight = options.outputHeight ?? outputSize;
+  const output = await sharp({ create: { width: outputSize, height: outputHeight, channels: 4, background: '#dc5522' } }).png().toBuffer();
   const mock = await createComfyMock(output);
   const jobs = new QwenJobs(store, {
     host: mock.host,

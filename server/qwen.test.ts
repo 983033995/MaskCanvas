@@ -5,9 +5,22 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import sharp from 'sharp';
-import { QwenJobs, buildQwenWorkflow, comfyUrl, cropForMask } from './qwen.js';
+import { QwenJobs, alignGptOutputToPaddedSize, buildQwenWorkflow, comfyUrl, cropForMask } from './qwen.js';
 import { createStore } from './store.js';
 import { ProposalStore } from './proposals.js';
+
+test('alignGptOutputToPaddedSize resizes same-aspect GPT native squares and rejects bad aspect', async () => {
+  const native = await sharp({ create: { width: 1254, height: 1254, channels: 3, background: { r: 10, g: 20, b: 30 } } }).png().toBuffer();
+  const aligned = await alignGptOutputToPaddedSize(native, 1024, 1024);
+  const meta = await sharp(aligned).metadata();
+  assert.equal(meta.width, 1024);
+  assert.equal(meta.height, 1024);
+  const already = await sharp({ create: { width: 1024, height: 1024, channels: 3, background: '#112233' } }).png().toBuffer();
+  const same = await alignGptOutputToPaddedSize(already, 1024, 1024);
+  assert.equal(same, already);
+  const bad = await sharp({ create: { width: 512, height: 768, channels: 3, background: '#000' } }).png().toBuffer();
+  await assert.rejects(() => alignGptOutputToPaddedSize(bad, 1024, 1024), /宽高比/);
+});
 
 test('Qwen workflow preserves image reference and 32-grid dimensions without resize', () => {
   const wf = buildQwenWorkflow('maskcanvas/test.png', 'remove twig', 4, 'test');
