@@ -1,0 +1,143 @@
+{
+  "version": 2,
+  "date": "2026-10-22",
+  "status": "static-design-only",
+  "visual_direction": "用户已选择浅色专业影像工作台",
+  "html_created": false,
+  "assets": [
+    {
+      "id": "S01",
+      "title": "项目入口",
+      "file": "s01-projects.png",
+      "width": 1586,
+      "height": 992,
+      "bytes": 1639710,
+      "sha256": "2de60e0b6665c8c5e8ea4a5d700a4f70aaa762ee943d43eb234dabf82c14f500",
+      "png_crc_valid": true,
+      "pixel_data_decompresses": true,
+      "generation": "built-in ImageGen",
+      "synthetic_demo": true
+    },
+    {
+      "id": "S02",
+      "title": "精修画布",
+      "file": "s02-editor.png",
+      "width": 1586,
+      "height": 992,
+      "bytes": 1934081,
+      "sha256": "6ff8bee22d4f9d7ebf996f259184f72ac825b8a9e8144d5f0575e2b70bfccfa6",
+      "png_crc_valid": true,
+      "pixel_data_decompresses": true,
+      "generation": "built-in ImageGen",
+      "synthetic_demo": true
+    },
+    {
+      "id": "S03",
+      "title": "精细标注",
+      "file": "s03-annotation.png",
+      "width": 1586,
+      "height": 992,
+      "bytes": 2084871,
+      "sha256": "66d9d4a6b1325369560cbe000f2729fc103de1737de8e1df0579bef44b688057",
+      "png_crc_valid": true,
+      "pixel_data_decompresses": true,
+      "generation": "built-in ImageGen",
+      "synthetic_demo": true
+    },
+    {
+      "id": "S04",
+      "title": "Agent 协同",
+      "file": "s04-collaboration.png",
+      "width": 1586,
+      "height": 992,
+      "bytes": 1865610,
+      "sha256": "0117017c09d4458e09e306e3a5f05ce815ecf2b9464dd6f513fe891ae6f7c2ea",
+      "png_crc_valid": true,
+      "pixel_data_decompresses": true,
+      "generation": "built-in ImageGen",
+      "synthetic_demo": true
+    },
+    {
+      "id": "S05",
+      "title": "自主任务",
+      "file": "s05-autonomous-task.png",
+      "width": 1586,
+      "height": 992,
+      "bytes": 1606508,
+      "sha256": "f8a4e041dc9fb0fe952f8c08939f489959c1bb8f407a4b68edcf3c9cad4bc9f3",
+      "png_crc_valid": true,
+      "pixel_data_decompresses": true,
+      "generation": "built-in ImageGen",
+      "synthetic_demo": true
+    },
+    {
+      "id": "S06",
+      "title": "结果验收",
+      "file": "s06-review-final.png",
+      "width": 1586,
+      "height": 992,
+      "bytes": 1769642,
+      "sha256": "cf7768414c4b6ad037c46b31b1138d7f2c8df215d7fd61a6f09967888efcd26d",
+      "png_crc_valid": true,
+      "pixel_data_decompresses": true,
+      "generation": "built-in ImageGen",
+      "synthetic_demo": true
+    },
+    {
+      "id": "S07",
+      "title": "导出与交接",
+      "file": "s07-handoff.png",
+      "width": 1586,
+      "height": 992,
+      "bytes": 1571591,
+      "sha256": "887014e585abc8982d0df6beebaf6a515339402fb37d98805b91fbd9fc47f02e",
+      "png_crc_valid": true,
+      "pixel_data_decompresses": true,
+      "generation": "built-in ImageGen",
+      "synthetic_demo": true
+    },
+    {
+      "id": "S08",
+      "title": "连接与设置",
+      "file": "s08-settings-final.png",
+      "width": 1586,
+      "height": 992,
+      "bytes": 1345533,
+      "sha256": "7861c28ca8a6954fc512c13ff33b42b807b0d281c4a3694b0e502ddaf765235c",
+      "png_crc_valid": true,
+      "pixel_data_decompresses": true,
+      "generation": "built-in ImageGen",
+      "synthetic_demo": true
+    },
+    {
+      "id": "F01",
+      "title": "三模式流程",
+      "file": "f01-three-mode-flow.png",
+      "width": 1605,
+      "height": 980,
+      "bytes": 1462773,
+      "sha256": "642518a147553bcd4e311df4abe3bf7a451f8cc8c8cf91735b59cb102b9ddb2f",
+      "png_crc_valid": true,
+      "pixel_data_decompresses": true,
+      "generation": "built-in ImageGen",
+      "synthetic_demo": true
+    },
+    {
+      "id": "F02",
+      "title": "状态与异常交互",
+      "file": "f02-states-and-recovery.png",
+      "width": 1605,
+      "height": 980,
+      "bytes": 1428087,
+      "sha256": "f451c61864ceff6adec1b9dfd3f666956f80a20b200e5d9f56e3ba5b775a8654",
+      "png_crc_valid": true,
+      "pixel_data_decompresses": true,
+      "generation": "built-in ImageGen",
+      "synthetic_demo": true
+    }
+  ],
+  "drafts_not_in_delivery": [
+    "s06-review.png",
+    "s08-settings.png"
+  ]
+}

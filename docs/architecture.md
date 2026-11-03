@@ -1,210 +1,80 @@
-# MaskCanvas — Architecture
+# MaskCanvas 架构方案 v2
 
-## Goals
+更新：2026-10-22。本地像素核心、文件项目、基础画布、stdio MCP 与 Qwen 作业适配已落地；真实生成与完整自主能力仍待验收。需求见 [requirements.md](requirements.md)，当前状态见 [development-progress.md](development-progress.md)。未标完成的段落仍为目标架构。
 
-- Local-first: image, masks, versions, and model calls stay on the machine.
-- Human-in-the-loop: the canvas is the source of truth for geometry; the agent is the executor.
-- Model-agnostic: Qwen-Image 2.1 first, other local ComfyUI models later.
-- Small surface: a web canvas + a local MCP server + a ComfyUI adapter.
+## 产品边界
 
-## Components
+普通浏览器画布与不同 Agent 的 MCP 入口连接同一编辑核心。控制端管理资产与版本，Windows ComfyUI 为执行节点之一；前端不直接处理跨机器路径和上游凭据。
 
-```text
-┌──────────────────────────────┐
-│ Browser (127.0.0.1)          │
-│ React + Vite + Konva         │
-│ canvas / masks / regions     │
-└──────────────┬───────────────┘
-               │ HTTP + WS (session token)
-┌──────────────▼───────────────┐
-│ MaskCanvas local server      │
-│ - static UI                  │
-│ - project store (files)      │
-│ - job queue / state          │
-│ - MCP server (stdio/HTTP)    │
-└──────────────┬───────────────┘
-               │ HTTP
-┌──────────────▼───────────────┐
-│ ComfyUI (local/tailnet)      │
-│ Qwen-Image-2.1 Turbo         │
-│ Inpaint Crop/Stitch          │
-└──────────────────────────────┘
-```
-
-Suggested stack:
-
-| Layer | Choice | Why |
-|---|---|---|
-| UI | React + Vite + TypeScript | Fast, typed, easy local dev |
-| Canvas | Konva (react-konva) | Selection handles, masks, layers, zoom/pan |
-| State | Zustand | Small, predictable; undo/redo via command stack |
-| Styling | Tailwind + CSS variables | Design tokens map cleanly |
-| Server | TypeScript + Fastify/Express | Same language as UI; easy static hosting |
-| MCP | `@modelcontextprotocol/sdk` | stdio for local agents; optional HTTP |
-| Realtime | WebSocket/SSE | Job progress to UI |
-| Store | Filesystem + SQLite (optional) | Simple; project portability |
-| Qwen | ComfyUI HTTP API | Reuses the existing node; no new model stack |
-
-## Project store
-
-```text
-~/Pictures/MaskCanvas/<project_id>/
-  source.png
-  preview.png
-  regions.json
-  masks/
-    r1.png
-    r2.png
-    k1.png
-  versions/
-    v1.png
-    v1.json
-    v2.png
-    v2.json
-  exports/
-```
-
-`regions.json`:
-
-```json
-{
-  "project_id": "family-portrait",
-  "source": "source.png",
-  "width": 3376,
-  "height": 6000,
-  "regions": [
-    {"id":"r1","name":"下颌 / 颈线","tool":"lasso","mask":"masks/r1.png","operation":"retouch","prompt":"...","strength":0.8,"feather":18,"protect":false},
-    {"id":"r2","name":"上装 / 下装","tool":"brush","mask":"masks/r2.png","operation":"replace","prompt":"...","strength":1.0,"feather":12,"protect":false},
-    {"id":"k1","name":"宝宝脸部","tool":"box","mask":"masks/k1.png","operation":"keep","prompt":"","strength":1.0,"feather":8,"protect":true}
-  ],
-  "versions": [
-    {"id":"v1","source":"source.png","accepted":true,"meta":{"model":"qwen-image-2.1","seed":9501,"resolution":1280}},
-    {"id":"v2","source":"versions/v2.png","accepted":false,"meta":{"model":"qwen-image-2.1","seed":9512,"resolution":1280}}
-  ]
-}
-```
-
-Rules:
-
-- Masks are full-resolution 8-bit PNGs, white = edit/keep, black = outside.
-- `protect: true` masks are subtracted from the edit union; they are not prompts.
-- Region order = z-order; overlapping edits merge, keep wins.
-- Each version stores its exact inputs (region snapshot + prompt + seed + model +
-  resolution) so it is reproducible.
-- Source and accepted versions are immutable; deletion only hides a version.
-
-## MCP tool surface
-
-| Tool | Input | Output |
-|---|---|---|
-| `canvas_open` | `image_path`, `project_id?` | `{project_id, url}` |
-| `canvas_add_region` | `project_id`, `mask_path`, `operation`, `prompt`, `protect` | `region` |
-| `canvas_get_annotations` | `project_id`, `include_masks?` | `regions.json` + absolute mask paths |
-| `canvas_export_mask` | `project_id`, `region_ids?` | `mask.png` (edit union minus keep) |
-| `qwen_apply` | `project_id`, `region_ids`, `resolution`, `seed?` | `{job_id}` |
-| `qwen_wait` | `job_id`, `timeout?` | `{status, version_id, result_path}` |
-| `qwen_cancel` | `job_id` | `{cancelled}` |
-| `canvas_list_versions` | `project_id` | versions |
-| `canvas_accept` | `project_id`, `version_id` | accepted version |
-| `canvas_export` | `project_id`, `format`, `include_annotations` | export path |
-| `canvas_close` | `project_id` | `{closed}` |
-
-MCP transport:
-
-- stdio for a local agent launched by the user;
-- optional HTTP at `127.0.0.1:7317/mcp` with a per-session token;
-- never bind `0.0.0.0` by default.
-
-## Qwen adapter
-
-### Small edit (region inpaint)
-
-1. Build the edit union from non-protect regions; subtract keep masks.
-2. Expand the bounding box by 64–128px (context).
-3. Upload the full image + expanded crop + mask to ComfyUI.
-4. `Inpaint Crop` → Qwen-Image-2.1 Turbo → `Inpaint Stitch`.
-5. Feather 16–32px at the stitch; color-match to the base.
-6. Return a new version.
-
-If `Inpaint Crop/Stitch` is not installed, fall back to latent-mask canary or
-crop-and-composite; mark the version `quality: canary`.
-
-### Large restyle (outfit/hair)
-
-1. Use the region bbox as a crop, with 5–10% margin.
-2. Run Qwen instruction edit on the crop.
-3. Composite only inside the region mask; subtract keep masks.
-4. Use the compositing rules from the Qwen image edit skill:
-   - one coherent source region over internal patches;
-   - cover old faces fully, no 50/50 face blends;
-   - targeted remnant replacement for old clothing;
-   - separate warm/cool outfit correction;
-   - QA at 100%.
-
-### Multi-region
-
-- Sequential by default; one region = one Qwen call.
-- A job can contain several regions; the server runs them in order and creates
-  one version per region or one combined version (configurable).
-- Never combine face + outfit + background in one call.
-
-## Job queue
-
-- One local queue shared by UI and agent.
-- States: `queued`, `running`, `succeeded`, `failed`, `cancelled`.
-- If the ComfyUI node is shared with H3, read `/queue` and show the queue
-  position; never call `/interrupt` on a non-MaskCanvas job.
-- Cancel only the job's own prompt; if the job is still queued, remove it from
-  the ComfyUI queue via `POST /queue {"delete":[pid]}`.
-- Persist job state in `jobs.json`; resume after server restart by polling
-  `/history/{pid}`.
-
-## Security / privacy
-
-- Bind UI and MCP to `127.0.0.1`; random session token in the URL/header.
-- No telemetry, no external fonts/CDNs, no cloud calls.
-- Project files under `~/Pictures/MaskCanvas/`; `projects/` in the repo ignored.
-- Do not log image bytes or prompts to external services.
-- Export strips sensitive EXIF by default (optional keep).
-- For Feishu delivery, copy final files to the bridge outbox; never send local
-  paths.
-
-## Repo layout (target)
-
-```text
-MaskCanvas/
-  app/                 # React/Vite UI
-    src/
-      canvas/          # Konva canvas, tools, masks
-      inspector/       # region cards, job card, history
-      filmstrip/       # versions
-      state/           # Zustand store, undo/redo
-  server/              # Fastify + MCP + job queue
-    src/
-      mcp/             # tool definitions
-      comfy/           # Qwen adapter
-      store/           # project files, SQLite optional
-  packages/shared/     # types, JSON schema, mask utils
-  docs/
-  design/
-```
-
-## Testing
-
-- Unit: mask union/subtract, bbox expansion, color match, region state machine.
-- Integration: upload → prompt → history → view with a mocked ComfyUI.
-- E2E: draw a box → prompt → fake job → version → export.
-- Live canary: one real Qwen run on a synthetic portrait (not a private photo).
-- Privacy test: assert no outbound network except 127.0.0.1/tailnet.
-
-## Risks
-
-| Risk | Mitigation |
+| 层 | 职责 |
 |---|---|
-| Qwen changes identity/hands | Crop tightly; keep masks; one region per pass |
-| Seams at inpaint stitch | `Inpaint Crop/Stitch` + feather + color match; QA 100% |
-| GPU busy with H3 | Queue UX; no interrupt; estimate honestly |
-| Large images slow | Downsample preview; full-res mask; process at 1280–1536 |
-| Browser canvas performance | Konva layers; mask as a single bitmap; avoid per-pixel React state |
-| MCP/UI concurrency | Versioned regions; lock during generation; last-write-wins with audit |
-| Private photo leak | Localhost-only, no telemetry, no cloud, explicit export |
+| 画布 | 查看照片、编辑/保护 mask、局部意图、对比与接管 |
+| MCP | 能力发现、观察、建区、计划、任务、候选、验收与交接 |
+| 编辑核心 | 坐标、范围、合成、版本冲突、作业持久化与规则 |
+| 项目存储 | 原始资产、基准、mask、输入快照、候选、报告 |
+| 适配器 | Qwen/ComfyUI、GPT Image，以及可选检测/分割服务 |
+
+## 技术选型方向
+
+自有画布若确有必要，延续 React、TypeScript、Vite 的方向，画布库通过大图/蒙版试验后确定。服务端同语言或复用现有适配服务均可；不因设计稿先锁死依赖版本。存储优先项目文件与明确 schema，暂不引入云数据库。
+
+InpaintCanvas 先作为现成候选做差距验证，尤其核对其本地命令路由、后台 Chromium、大图导出、保护语义和跨设备桥接。优先外部适配，不直接复制上游代码进 MIT 项目。
+
+## 最小领域对象
+
+| 对象 | 关键字段与规则 |
+|---|---|
+| Asset | 内容哈希、相对路径、格式、尺寸、方向和色彩；原始文件不可变 |
+| Project | 当前接受版本、标注 revision、任务策略、目的地权限 |
+| Region | id、名称、来源、人/Agent、operation、intent、mask 引用 |
+| EditPlan | base_version、annotation_revision、区域顺序、后端偏好、范围与预算 |
+| Job | 提交幂等 ID、外部 prompt/job ID、输入快照、持久化状态 |
+| Candidate | 基准引用、生成原料、变换链、合成结果、验收报告 |
+| Version | 接受的不可变候选；原图永远保留；可产生新编辑基准 |
+| Handoff | JSON：schema、资产引用/哈希、区域、任务与结果引用；图片为独立文件，不含凭据或执行脚本 |
+
+## 范围与合成
+
+E=允许编辑、K=硬保护、C=模型上下文。C 只影响模型可见信息；有效 alpha 必须限制在 E−K。crop 记录原图偏移、缩放和方向变换，模型尺寸网格取整也必须回投校验。
+
+羽化向内；校色只在有效范围内；全部处理之后恢复 K 与有效 alpha 为零的基准像素。对相同无损基准检查 `protected_changed_pixels`、`outside_edit_changed_pixels` 和最大通道差。
+
+生成结果比例异常、人物移动或无法对齐时成为待处理候选，不自动拉伸提交。多个不同意图的重叠区域需要明确先后；不可简单合并 prompt 一次重绘。
+
+## 版本与并发
+
+任务提交冻结基准和标注快照；执行中仍可编辑，但新标注不修改已提交任务。接受结果要比较 base_version 与 revision。基准过期时保留为分支候选，由用户或符合策略的 Agent 决定重新执行；不使用 last-write-wins。
+
+## 后端协议
+
+能力探测分别报告：本地/远端、图像编辑、mask、参考图、返回尺寸、seed/强度是否支持。后端统一执行“准备输入 → 提交 → 查询 → 获取候选”，不承担最终保护保证。
+
+ComfyUI 使用已有 HTTP/WS API 与 API 格式工作流，记录实际 prompt ID。GPT 路线必须核实自定义节点和官方节点的不同能力；不得仅凭模型下拉列表认定可用。具体服务状态在实施时重新检查。
+
+## 作业状态
+
+`draft → ready → queued → running → validating → candidate`；明确失败为 `failed`，不确定受理/断线为 `reconciling`。候选可接受、拒绝或进入冲突/需要人工状态。取消请求与实际取消分别记录；不能把“发出取消”当完成。
+
+共享 GPU 时查询队列但不全局 interrupt、clear 或释放他人任务。未知状态先恢复查询，不重复提交；可恢复信息存盘，不只存在聊天记录。
+
+## MCP 接口组
+
+拟议分组而非现有可执行工具：capabilities、project/observe、regions/plan、jobs、candidates/versions、validation、handoff/import/export。
+
+输入含 project_id、基准/revision 和资产引用；写入使用并发检查；任务提交使用幂等 ID。stdio 适配客户端优先，认证 Streamable HTTP 按需要增加；多个客户端应连接同一编辑核心。
+
+返回结构化 JSON，可附图像内容/资源；无视觉能力的客户端只执行标注，不冒充视觉验收。MCP Apps 内嵌界面是可选增强，普通浏览器画布始终独立可用。
+
+## 安全与隐私
+
+默认控制端绑定 loopback。跨设备服务通过已有个人私网/受控桥接及认证，不为方便修改为公网裸露。验证来源、认证与项目访问边界，图片资源受与工具相同的权限约束。
+
+图像分析与生成目的地分开控制；缩略图和 crop 同样受权限检查。凭据只在适配器运行环境，工具响应、图稿、包和日志不得包含密钥。日志记录任务状态与必要错误，不默认记录照片或完整敏感提示词。
+
+## 待实现验证
+
+坐标/蒙版/合成/版本用确定性测试；异步适配用模拟失败与恢复；再用非私人素材验证两个后端、三客户端与三模式。专业色彩、RAW、16-bit 和复杂图层另列阶段。
+
+## JSON 与建议确认流程修订
+
+日常交接只用 JSON。`server/annotations.ts` 负责标注 JSON；`server/proposal-document.ts` 负责计划 JSON；两者都有图片引用/哈希与基准修订。`server/proposals.ts` 独立保存建议草稿、用户修订和确认记录，计划任务绑定确认快照，关键输入变化后失效。多区域执行保存每步的不可变输入/合成结果，最终只产生一个候选。UI 与 MCP 共用 HTTP 核心和同一 ProposalStore，ZIP 仅留底层历史兼容。详见 [agent-workflow.md](agent-workflow.md)。
